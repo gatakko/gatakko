@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# see https://github.com/docker/docker/issues/8231
+ulimit -n "${LDAP_ULIMIT_NUMFILE:-1024}"
+
+run-parts --exit-on-error /entrypoint.d && exec "$@"

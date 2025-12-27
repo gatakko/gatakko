@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: daily
+  namespace: gatakko-core
+spec:
+  schedule: "0 19 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: admin
+          imagePullSecrets:
+          - name: regcred
+          containers:
+          - name: kubectl
+            image: localhost:30500/gatakko/admin
+            command: [/script/start]
+            workingDir: /root
+            volumeMounts:
+            - mountPath: /script
+              name: daily-script
+            - mountPath: /secret
+              name: admin
+            - mountPath: /cacert
+              name: cacert
+          volumes:
+          - name: daily-script
+            configMap:
+              name: daily-script
+              defaultMode: 0755
+          - name: admin
+            secret:
+              secretName: admin
+          - name: cacert
+            secret:
+              secretName: cacert

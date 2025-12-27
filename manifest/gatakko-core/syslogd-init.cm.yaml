@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: syslogd-init
+  namespace: gatakko-core
+data:
+  10-config: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- etc/rsyslog.conf.orig
+    +++ etc/rsyslog.conf
+    @@ -8,13 +8,15 @@
+     #### MODULES ####
+     #################
+
+    -module(load="imuxsock") # provides support for local system logging
+    +#module(load="imuxsock") # provides support for local system logging
+     #module(load="imklog")   # provides kernel logging support
+     #module(load="immark")  # provides --MARK-- message capability
+
+     # provides UDP syslog reception
+     #module(load="imudp")
+     #input(type="imudp" port="514")
+    +module(load="imudp")
+    +input(type="imudp" port="514")
+
+     # provides TCP syslog reception
+     #module(load="imtcp")
+    END

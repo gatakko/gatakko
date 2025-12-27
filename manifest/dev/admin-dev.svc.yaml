@@ -1,0 +1,13 @@
+# For developers' convenience. AT YOUR OWN RISK. 
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-dev
+  namespace: gatakko-core
+spec:
+  selector:
+    dev: admin-dev
+  ports:
+  - name: ssh
+    port: 22
+  type: ClusterIP

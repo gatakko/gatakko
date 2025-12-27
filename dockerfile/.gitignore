@@ -1,0 +1,7 @@
+02-kubectl/*.tgz
+30-webui-api/src/opt/webui/venv
+30-webui-api/src/opt/webui/sessions
+30-webui-api/src/opt/webui/__pycache__
+30-webui-front/dev/.vite
+30-webui-front/dev/dist
+30-webui-front/dev/node_modules

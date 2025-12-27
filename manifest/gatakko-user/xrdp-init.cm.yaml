@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xrdp-init
+  namespace: gatakko-user
+data:
+  10-env: |
+    #!/bin/bash
+    set -euC
+    set | sed '/^KUBERNETES_SERVICE_[^=]*=/!d' >> /etc/environment
+    echo NEGICCO_PROTO=RDP >> /etc/environment
+
+  20-xrdp-ini: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<END
+    --- etc/xrdp/xrdp.ini.orig
+    +++ etc/xrdp/xrdp.ini
+    @@ -44,7 +44,7 @@
+
+     ; security layer can be 'tls', 'rdp' or 'negotiate'
+     ; for client compatible layer
+    -security_layer=negotiate
+    +security_layer=tls
+
+     ; minimum security level allowed for client for classic RDP encryption
+     ; use tls_ciphers to configure TLS encryption
+    @@ -55,8 +55,8 @@
+     ; openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365
+     ; note this needs the user xrdp to be a member of the ssl-cert group, do with e.g.
+     ;\$ sudo adduser xrdp ssl-cert
+    -certificate=
+    -key_file=
+    +certificate=/tls/server.crt
+    +key_file=/tls/server.key
+
+     ; set SSL protocols
+     ; can be comma separated list of 'SSLv3', 'TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'
+    @@ -128,9 +128,10 @@
+
+     ; Login Screen Window Title
+     #ls_title=My Login Title
+    +ls_title=$HOSTNAME
+
+     ; top level window background color in RGB format
+    -ls_top_window_bg_color=003057
+    +ls_top_window_bg_color=26536e
+
+     ; width and height of login screen
+     ;
+    @@ -204,6 +205,8 @@
+     #SyslogLevel=INFO
+     #EnableConsole=false
+     #ConsoleLevel=INFO
+    +EnableConsole=true
+    +ConsoleLevel=INFO
+     #EnableProcessId=false
+
+     [LoggingPerLogger]
+    END
+
+    sed -i -e '/^\[Xvnc\]$/,$d' /etc/xrdp/xrdp.ini
+
+  30-sesman-ini: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- etc/xrdp/sesman.ini.orig
+    +++ etc/xrdp/sesman.ini
+    @@ -3,7 +3,7 @@
+     [Globals]
+     ; listening port
+     #ListenPort=sesman.socket
+    -EnableUserWindowManager=true
+    +EnableUserWindowManager=false
+     ; Give in relative path to user's home directory
+     UserWindowManager=startwm.sh
+     ; Give in full path or relative path to /etc/xrdp
+    @@ -12,7 +12,7 @@
+     ReconnectScript=reconnectwm.sh
+
+     [Security]
+    -AllowRootLogin=true
+    +AllowRootLogin=false
+     MaxLoginRetry=4
+     TerminalServerUsers=tsusers
+     TerminalServerAdmins=tsadmins
+    @@ -60,7 +60,7 @@
+     ;; MaxSessions - maximum number of connections to an xrdp server
+     ; Type: integer
+     ; Default: 0
+    -MaxSessions=50
+    +MaxSessions=256
+
+     ;; MaxDisplayNumer - maximum number considered for an X display
+     ; Type: integer
+    @@ -76,7 +76,7 @@
+     ; Default: false
+     ; if 1, true, or yes, every session will be killed within DisconnectedTimeLimit
+     ; seconds after the user disconnects
+    -KillDisconnected=false
+    +KillDisconnected=true
+
+     ;; DisconnectedTimeLimit (seconds) - wait before kill disconnected sessions
+     ; Type: integer
+    @@ -115,6 +115,8 @@
+     #SyslogLevel=INFO
+     #EnableConsole=false
+     #ConsoleLevel=INFO
+    +EnableConsole=true
+    +ConsoleLevel=INFO
+     #EnableProcessId=false
+
+     [LoggingPerLogger]
+    @@ -147,8 +149,6 @@
+     param=-noreset
+     param=-nolisten
+     param=tcp
+    -param=-logfile
+    -param=.xorgxrdp.%s.log
+
+     [Xvnc]
+     param=Xvnc
+    @@ -170,6 +170,7 @@
+     FileUmask=077
+     ; Can be used to disable FUSE functionality - see sesman.ini(5)
+     #EnableFuseMount=false
+    +EnableFuseMount=false
+     ; Uncomment this line only if you are using GNOME 3 versions 3.29.92
+     ; and up, and you wish to cut-paste files between Nautilus and Windows. Do
+     ; not use this setting for GNOME 4, or other file managers
+    @@ -196,6 +197,8 @@
+     #SyslogLevel=INFO
+     #EnableConsole=false
+     #ConsoleLevel=INFO
+    +EnableConsole=true
+    +ConsoleLevel=INFO
+     #EnableProcessId=false
+
+     [ChansrvLoggingPerLogger]
+    @@ -205,4 +208,3 @@
+     #main()=INFO
+
+     [SessionVariables]
+    -PULSE_SCRIPT=/etc/xrdp/pulse/default.pa
+
+    END
+
+  40-startwm: |
+    #!/bin/bash
+    set -euC
+
+    cat <<END >| /etc/xrdp/startwm.sh
+    #!/bin/bash -e
+    xsetroot -solid "#05475c" -cursor_name left_ptr
+    exec /opt/session/start
+    END
+
+  50-mkhomedir: |
+    #!/bin/bash
+    set -euC
+    echo 'session required pam_mkhomedir.so' >> /etc/pam.d/xrdp-sesman

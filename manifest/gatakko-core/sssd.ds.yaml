@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sssd
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: sssd
+  template:
+    metadata:
+      labels:
+        app: sssd
+    spec:
+      containers:
+      - name: sssd
+        image: localhost:30500/gatakko/sssd
+        env:
+        - name: LDAP_BASE_DN
+          valueFrom:
+            configMapKeyRef:
+              name: ldap-env
+              key: LDAP_BASE_DN
+        - name: LDAP_SSS_DN
+          valueFrom:
+            configMapKeyRef:
+              name: ldap-env
+              key: LDAP_SSS_DN
+        - name: LDAP_SSS_DN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ldap-env
+              key: LDAP_SSS_DN_PASSWORD
+        volumeMounts:
+        - mountPath: /var/lib/sss
+          name: sss
+        - mountPath: /entrypoint.d/50-init.d
+          name: sssd-init
+        - mountPath: /cacert
+          name: cacert
+      imagePullSecrets:
+      - name: regcred
+      volumes:
+      - name: sss
+        hostPath:
+          path: /var/lib/gatakko/var/lib/sss
+          type: DirectoryOrCreate
+      - name: sssd-init
+        configMap:
+          name: sssd-init
+          defaultMode: 0755
+      - name: cacert
+        secret:
+          secretName: cacert

@@ -1,0 +1,14 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: user-pod
+  namespace: gatakko-user
+spec:
+  podSelector:
+    matchExpressions:
+    - key: gatakko/user
+      operator: Exists
+      values: []
+  policyTypes:
+  - Ingress
+  ingress: []

@@ -1,0 +1,4 @@
+dn: cn=student,ou=groups,${LDAP_BASE_DN}
+objectClass: posixGroup
+cn: student
+gidNumber: 10001

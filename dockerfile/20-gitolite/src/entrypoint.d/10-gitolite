@@ -1,0 +1,20 @@
+#!/bin/bash
+set -eu
+
+if [[ -z $(find /git -mindepth 1 -maxdepth 1 ! -name lost+found) ]]; then
+  chown git:git /git
+  chmod 755 /git
+
+  if [[ -f /gitkey/admin.pub ]]; then
+    DIR=/gitkey
+  else
+    DIR=/git/.ssh
+    install -d -o git -g git -m 700 "$DIR"
+    ssh-keygen -t ed25519 -P '' -C admin@gitolite -f "$DIR/admin"
+  fi
+
+  # NOTE: gitolite-admin's main branch must be `master`
+  su - git -c "git config --global init.defaultBranch master"
+  su - git -c "cd $DIR && gitolite setup -pk admin.pub"
+  su - git -c "git config --global init.defaultBranch main"
+fi

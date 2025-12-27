@@ -1,0 +1,11 @@
+dn: cn=admin,ou=users,${LDAP_BASE_DN}
+objectClass: person
+objectClass: posixAccount
+cn: admin
+sn: admin
+uid: admin
+uidNumber: 10000
+gidNumber: 10000
+homeDirectory: /home/users/admin
+loginShell: /bin/bash
+userPassword: ${LDAP_ADMIN_PASSWORD}

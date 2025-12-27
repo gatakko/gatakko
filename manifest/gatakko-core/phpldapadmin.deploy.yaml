@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phpldapadmin
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: phpldapadmin
+  template:
+    metadata:
+      labels:
+        app: phpldapadmin
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: phpldapadmin
+        image: localhost:30500/gatakko/phpldapadmin
+        env:
+        - name: LDAP_BASE_DN
+          valueFrom:
+            configMapKeyRef:
+              name: ldap-env
+              key: LDAP_BASE_DN
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - mountPath: /entrypoint.d/50-init.d
+          name: phpldapadmin-init
+        - mountPath: /secret
+          name: phpldapadmin-secret
+        - mountPath: /cacert
+          name: cacert
+      volumes:
+      - name: phpldapadmin-init
+        configMap:
+          name: phpldapadmin-init
+          defaultMode: 0755
+      - name: phpldapadmin-secret
+        secret:
+          secretName: phpldapadmin
+      - name: cacert
+        secret:
+          secretName: cacert

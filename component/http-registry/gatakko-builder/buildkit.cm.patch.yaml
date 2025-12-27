@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkit
+  namespace: gatakko-builder
+data:
+  buildkitd.toml: |
+    [registry."registry.gatakko-core.svc.cluster.local:5000"]
+    http=true

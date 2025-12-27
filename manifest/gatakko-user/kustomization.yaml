@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- admin.role.yaml
+- admin.rolebinding.yaml
+- lightdm-init.cm.yaml
+- lightdm.ds.yaml
+- lightdm.svc.yaml
+- login.sa.yaml
+- login.rolebinding.yaml
+- login.role.yaml
+- gatakko-user.ns.yaml
+- opt-flavor.cm.yaml
+- opt-session.cm.yaml
+- opt-session-ssh.secret.yaml
+- regcred.secret.yaml
+- sshd-host-keys.secret.yaml
+- sshd-init.cm.yaml
+- sshd.ds.yaml
+- sshd.svc.yaml
+- tls.secret.yaml
+- user-home.pvc.yaml
+- user-pod.netpol.yaml
+- xrdp-init.cm.yaml
+- xrdp.ds.yaml
+- xrdp.svc.yaml

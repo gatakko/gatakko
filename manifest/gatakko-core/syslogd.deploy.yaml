@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslogd
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: syslogd
+  template:
+    metadata:
+      labels:
+        app: syslogd
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: syslogd
+        image: localhost:30500/gatakko/syslog
+        volumeMounts:
+        - mountPath: /entrypoint.d/50-init.d
+          name: syslogd-init
+        - mountPath: /var/log
+          name: syslogd-pvc
+      volumes:
+      - name: syslogd-init
+        configMap:
+          name: syslogd-init
+          defaultMode: 0755
+      - name: syslogd-pvc
+        persistentVolumeClaim:
+          claimName: syslogd

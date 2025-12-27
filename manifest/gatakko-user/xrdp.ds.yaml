@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: xrdp
+  namespace: gatakko-user
+spec:
+  selector:
+    matchLabels:
+      app: xrdp
+  template:
+    metadata:
+      labels:
+        app: xrdp
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      serviceAccountName: login
+      containers:
+      - name: xrdp
+        image: localhost:30500/gatakko/xrdp:latest
+        volumeMounts:
+        - mountPath: /var/lib/sss
+          name: sss
+        - mountPath: /tmp/.X11-unix
+          name: x11-unix
+        - mountPath: /home/users
+          name: users
+        - mountPath: /entrypoint.d/50-init.d
+          name: xrdp-init
+        - mountPath: /tls
+          name: tls
+        - mountPath: /opt/session
+          name: opt-session
+        - mountPath: /opt/session/ssh
+          name: opt-session-ssh
+      volumes:
+      - name: sss
+        hostPath:
+          path: /var/lib/gatakko/var/lib/sss
+          type: Directory
+      - name: x11-unix
+        hostPath:
+          path: /var/lib/gatakko/tmp/.X11-unix
+          type: DirectoryOrCreate
+      - name: users
+        persistentVolumeClaim:
+          claimName: user-home
+      - name: xrdp-init
+        configMap:
+          name: xrdp-init
+          defaultMode: 0755
+      - name: tls
+        secret:
+          secretName: tls
+      - name: opt-session
+        configMap:
+          name: opt-session
+          defaultMode: 0755
+      - name: opt-session-ssh
+        secret:
+          secretName: opt-session-ssh

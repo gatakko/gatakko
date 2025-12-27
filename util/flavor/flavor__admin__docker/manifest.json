@@ -1,0 +1,127 @@
+{
+  "title": "管理者専用Docker",
+  "owners": ["admin"],
+  "users": ["admin"],
+  "packages": [
+    "docker-buildx",
+    "docker-cli",
+    "docker-compose",
+    "docker.io",
+    "iproute2",
+    "rootlesskit",
+    "slirp4netns",
+    "tini"
+  ],
+  "files": [
+    "Dockerfile"
+  ],
+  "patch": {
+    "spec": {
+      "initContainers": [
+        {
+          "name": "init-docker",
+          "image": "localhost:30500/gatakko/flavor/admin/docker:latest",
+          "command": [
+            "bash",
+            "-ec",
+            "chmod 755 /mnt; cd /mnt; install -d -m 755 -o $uid -g $gid .docker .docker/run .local; mkdir etc; echo $user:100001:65536 > etc/subuid; cp etc/subuid etc/subgid"
+          ],
+          "env": [
+            {
+              "name": "user",
+              "value": "${USER}"
+            },
+            {
+              "name": "uid",
+              "value": "${UID}"
+            },
+            {
+              "name": "gid",
+              "value": "${GID}"
+            }
+          ],
+          "volumeMounts": [
+            {
+              "mountPath": "/mnt",
+              "name": "var-lib-docker"
+            }
+          ]
+        }
+      ],
+      "containers": [
+        {
+          "name": "flavor",
+          "volumeMounts": [
+            {
+              "mountPath": "/var/lib/docker",
+              "name": "var-lib-docker"
+            },
+            {
+              "mountPath": "/etc/subuid",
+              "name": "var-lib-docker",
+              "subPath": "etc/subuid"
+            },
+            {
+              "mountPath": "/etc/subgid",
+              "name": "var-lib-docker",
+              "subPath": "etc/subgid"
+            }
+          ]
+        },
+        {
+          "name": "docker",
+          "image": "localhost:30500/gatakko/flavor/admin/docker:latest",
+          "securityContext": {
+            "privileged": true,
+            "runAsNonRoot": true,
+            "runAsUser": "${UID_N}",
+            "runAsGroup": "${GID_N}"
+          },
+          "command": [
+            "tini",
+            "--",
+            "/usr/share/docker.io/contrib/dockerd-rootless.sh",
+            "--iptables=false",
+            "--group=0"
+          ],
+          "env": [
+            {
+              "name": "XDG_RUNTIME_DIR",
+              "value": "/var/lib/docker/.docker/run"
+            },
+            {
+              "name": "XDG_DATA_HOME",
+              "value": "/var/lib/docker/.local/share"
+            }
+          ],
+          "volumeMounts": [
+            {
+              "mountPath": "/var/lib/sss",
+              "name": "sss"
+            },
+            {
+              "mountPath": "/var/lib/docker",
+              "name": "var-lib-docker"
+            },
+            {
+              "mountPath": "/etc/subuid",
+              "name": "var-lib-docker",
+              "subPath": "etc/subuid"
+            },
+            {
+              "mountPath": "/etc/subgid",
+              "name": "var-lib-docker",
+              "subPath": "etc/subgid"
+            }
+          ]
+        }
+      ],
+      "volumes": [
+        {
+          "name": "var-lib-docker",
+          "emptyDir": {}
+        }
+      ]
+    }
+  }
+}

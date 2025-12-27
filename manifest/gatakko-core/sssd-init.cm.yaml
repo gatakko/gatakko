@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sssd-init
+  namespace: gatakko-core
+data:
+  10-config: |
+    #!/bin/bash
+    set -euC
+
+    cat <<END > /etc/sssd/sssd.conf
+    [sssd]
+    config_file_version = 2
+    domains = LDAP
+    services = nss, pam
+    [domain/LDAP]
+    id_provider = ldap
+    ldap_uri = ldap://ldap.gatakko-core.svc.cluster.local
+    ldap_id_use_start_tls = true
+    ldap_tls_cacert = /cacert/ca.crt
+    ldap_search_base = $LDAP_BASE_DN
+    ldap_default_bind_dn = $LDAP_SSS_DN
+    ldap_default_authtok = $LDAP_SSS_DN_PASSWORD
+    END
+    chmod 600 /etc/sssd/sssd.conf

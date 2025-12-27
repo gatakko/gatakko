@@ -1,0 +1,7 @@
+#!/bin/bash
+set -e
+if [[ -z $(find /etc/ssh/keys -mindepth 1 -maxdepth 1) ]]; then
+  ssh-keygen -t ecdsa -C root@sshd -P '' -f /etc/ssh/keys/ssh_host_ecdsa_key
+  ssh-keygen -t ed25519 -C root@sshd -P '' -f /etc/ssh/keys/ssh_host_ed25519_key
+  ssh-keygen -t rsa -b 2048 -C root@sshd -P '' -f /etc/ssh/keys/ssh_host_rsa_key
+fi

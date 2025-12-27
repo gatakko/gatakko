@@ -1,0 +1,15 @@
+#!/bin/bash
+set -eu
+
+# perform initialization if database is empty
+if [[ -z $(find /etc/ldap/slapd.d /var/lib/ldap -mindepth 1 -maxdepth 1 \
+             ! -name lost+found) ]]
+then
+  debconf-set-selections <<-END
+	slapd slapd/password1 password ${LDAP_ADMIN_PASSWORD:-password}
+	slapd slapd/password2 password ${LDAP_ADMIN_PASSWORD:-password}
+	slapd slapd/domain string ${LDAP_DOMAIN:-nodomain}
+	slapd shared/organization string ${LDAP_ORGANIZATION:-nodomain}
+	END
+  dpkg-reconfigure -f noninteractive slapd
+fi

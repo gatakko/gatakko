@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lightdm-init
+  namespace: gatakko-user
+data:
+  10-env: |
+    #!/bin/bash
+    set -euC
+    set | sed '/^KUBERNETES_SERVICE_[^=]*=/!d' >> /etc/environment
+    echo NEGICCO_PROTO=VNC >> /etc/environment
+
+  20-lightdm-xsession: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- usr/share/xsessions/lightdm-xsession.desktop.orig
+    +++ usr/share/xsessions/lightdm-xsession.desktop
+    @@ -1,6 +1,6 @@
+     [Desktop Entry]
+     Version=1.0
+     Name=Default Xsession
+    -Exec=default
+    +Exec=/opt/session/start
+     Icon=
+     Type=Application
+    END
+
+  30-lightdm-conf: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- etc/lightdm/lightdm.conf.orig
+    +++ etc/lightdm/lightdm.conf
+    @@ -19,6 +19,7 @@
+     # dbus-service = True if LightDM provides a D-Bus service to control it
+     #
+     [LightDM]
+    +start-default-seat=false
+     #start-default-seat=true
+     #greeter-user=lightdm
+     #minimum-display-number=0
+    @@ -154,6 +155,9 @@
+     # depth = Color depth of display to use
+     #
+     [VNCServer]
+    +enabled=true
+    +command=Xvnc -SecurityTypes X509None -X509Cert /tls/server.crt -X509Key /tls/server.key -noreset
+    +depth=24
+     #enabled=false
+     #command=Xvnc
+     #port=5900
+    END
+
+  40-xsession-options: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- etc/X11/Xsession.options.orig
+    +++ etc/X11/Xsession.options
+    @@ -4,6 +4,3 @@
+     # See Xsession.options(5) for an explanation of the available options.
+     allow-failsafe
+     allow-user-resources
+    -allow-user-xsession
+    -use-ssh-agent
+    -use-session-dbus
+    END
+
+  50-mkhomedir: |
+    #!/bin/bash
+    set -euC
+    echo 'session required pam_mkhomedir.so' >> /etc/pam.d/lightdm

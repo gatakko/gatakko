@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euC
+PATH="/usr/share/docker.io/contrib:$PATH"
+export XDG_RUNTIME_DIR=/var/run/docker
+#ln -s /usr/bin/docker /usr/share/docker.io/contrib/docker
+exec dockerd-rootless.sh --iptables=false

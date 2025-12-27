@@ -1,0 +1,3 @@
+#!/bin/bash
+[ ! -d /entrypoint.d/50-init.d ] \
+|| exec run-parts --exit-on-error /entrypoint.d/50-init.d

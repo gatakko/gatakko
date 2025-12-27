@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+my @signals = qw(INT HUP PIPE QUIT TERM);
+foreach my $i (@signals) { $SIG{$i} = sub { exit 1 } }
+
+my $verbose = 0;
+my %tasks;
+
+for (;;) {
+  my $w = -1;
+  while ($w < 0 && @ARGV > 0) {
+    $_ = shift;
+    if ($_ eq '-v') {
+      $verbose = 1;
+    } elsif (/^-[ce]/) {
+      my $cmd = $' || shift;
+      die "missing argument to -$1" unless defined $cmd;
+      my $pid = fork();
+      if (!$pid) {
+        use POSIX qw(_exit);
+        setpgrp(0, 0);
+        exec($cmd) or POSIX::_exit(127);
+      }
+      print STDERR "start '$cmd' on process $pid\n" if $verbose;
+      $tasks{$pid} = $&;
+      $w = $pid if $& eq '-e';
+    } else {
+      die "unrecognized argument: '$_'\n"
+    }
+  }
+  my $r = wait;
+  print STDERR "process $r terminated\n" if $verbose && $r >= 0;
+  last if $r < 0 || ($tasks{$r} && $r != $w);
+  delete($tasks{$r}) if $r == $w;
+  $w = -1 if $r == $w;
+}
+
+END {
+  foreach my $i (@signals) { $SIG{$i} = 'IGNORE' }
+  print STDERR "send SIGTERM to all processes\n" if $verbose;
+  kill 'TERM', ($$ == 1 ? -1 : keys %tasks);
+  until (($_ = wait) < 0) {
+    print STDERR "process $_ terminated\n" if $verbose;
+  }
+}

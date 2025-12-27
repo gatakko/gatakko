@@ -1,0 +1,47 @@
+# For developers' convenience. AT YOUR OWN RISK. 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webui-dev
+  namespace: gatakko-core
+  labels:
+    dev: webui-dev
+spec:
+  restartPolicy: Never
+  imagePullSecrets:
+  - name: regcred
+  containers:
+  - name: webui-api
+    image: localhost:30500/gatakko/webui-api
+    env:
+    - name: GIT_SERVER
+      value: git.gatakko-core.svc.cluster.local
+    - name: SECURE_COOKIE
+      value: "false"
+    volumeMounts:
+    - mountPath: /var/lib/sss
+      name: sss
+    - mountPath: /entrypoint.d/50-init.d
+      name: webui-init
+    - mountPath: /opt/webui/ssh
+      name: webui-ssh
+    - mountPath: /opt/webui/sessions
+      name: webui-sessions
+  volumes:
+  - name: sss
+    hostPath:
+      path: /var/lib/gatakko/var/lib/sss
+      type: Directory
+  - name: webui-init
+    configMap:
+      name: webui-init
+      defaultMode: 0755
+  - name: webui-secret
+    secret:
+      secretName: webui
+  - name: webui-ssh
+    secret:
+      secretName: webui-ssh
+      defaultMode: 0400
+  - name: webui-sessions
+    emptyDir: {}

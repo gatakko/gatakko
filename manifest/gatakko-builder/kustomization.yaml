@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- admin.role.yaml
+- admin.rolebinding.yaml
+- builder.role.yaml
+- builder.rolebinding.yaml
+- builder.sa.yaml
+- buildkit.cm.yaml
+- buildkit.secret.yaml
+- cacert.secret.yaml
+- gatakko-builder.ns.yaml
+- regcred.secret.yaml

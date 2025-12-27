@@ -1,0 +1,376 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opt-session
+  namespace: gatakko-user
+data:
+  start: |
+    #!/bin/bash
+    set -euC -o pipefail
+    readonly USER="$USER"
+    readonly HOSTNAME="$HOSTNAME"
+    readonly HOME="$HOME"
+    : ${LOGIN_TIMEOUT:=240}
+    readonly LOGIN_TIMEOUT
+    readonly DISPLAY
+    readonly SSH_ORIGINAL_COMMAND
+    readonly SSH_CONNECTION
+    : ${NEGICCO_PROTO:=unknown}
+    readonly NEGICCO_PROTO
+
+    OPT_SESSION=$(dirname "$0")
+    readonly OPT_SESSION
+
+    syslog () {
+      logger -P 514 -n syslogd.gatakko-core.svc.cluster.local -d -t "$USER"
+    }
+
+    ssh () {
+      command ssh \
+        -oUserKnownHostsFile="$OPT_SESSION/ssh/known_hosts" \
+        -oIdentityFile="$OPT_SESSION/ssh/login" \
+        -oIdentitiesOnly=yes \
+        -oStrictHostKeyChecking=yes \
+        -oControlMaster=auto \
+        -oControlPersist=15 \
+        -oControlPath="$TMP/.ssh-%r@%h:%p" \
+        "$@"
+    }
+
+    kubectl () {
+      command kubectl --cache-dir "$TMP/.kube/cache" --kubeconfig /dev/null "$@"
+    }
+
+    TMP=$(mktemp -d)
+    readonly TMP
+    TIMER_PID=
+    POD_RETAINED=
+    XAUTH_ADDED=
+    LOGGED_IN=
+
+    onexit () {
+      local st=$?
+      set +e
+      trap '' INT HUP TERM
+      exec < /dev/null > /dev/null 2>&1
+      syslog <<<"Exit with status $st"
+      if [[ -n $LOGGED_IN ]]; then
+        NOW=$(date +%s)
+        JSON=$(jq --arg p "$NEGICCO_PROTO" --arg u "$USER" \
+                 --argjson t "$NOW" --argjson s "$st" -c -n \
+                 '{p:$p,u:$u,t:$t,s:$s}')
+        ssh git@git.gatakko-core.svc.cluster.local \
+          adm login append-log "$LOGGED_IN" <<<"$JSON"
+      fi
+      [[ -n $TIMER_PID ]] && kill "$TIMER_PID"
+      [[ -n ${DISPLAY+defined} ]] && xauth remove "$DISPLAY"
+      [[ -n $XAUTH_ADDED ]] && xauth remove "$XAUTH_ADDED"
+      [[ -n $POD_RETAINED ]] \
+      && kubectl delete pod "$POD_RETAINED" --wait=false --ignore-not-found
+      ssh -O exit git@git.gatakko-core.svc.cluster.local
+      rm -rf "$TMP"
+    }
+    trap onexit EXIT
+
+    die () {
+      syslog <<<"ERROR: $@"
+      if [[ -n ${SSH_CONNECTION+defined} || -z ${DISPLAY+defined} ]]; then
+        echo "[!] $@" 1>&2
+      else
+        yad --center --splash --button=OK:0 --borders=8 \
+          --image dialog-error --text "$@"
+      fi
+      exit 1
+    }
+
+    with_template () {
+      eval $'shift 1; "$@" <<__END__\n'"$(<"$1")"$'\n__END__'
+    }
+
+    syslog <<<"Session established by $NEGICCO_PROTO"
+
+    ## Avoid creating files in user's home directory due to this script
+    declare -rx XDG_CONFIG_HOME="$TMP/.config"
+    declare -rx XDG_DATA_HOME="$TMP/.local/share"
+    declare -rx XDG_CACHE_HOME="$TMP/.cache"
+    declare -rx XDG_STATE_HOME="$TMP/.local/state"
+
+    ## Connect to existing pod if possible
+    POD_NAME=
+    if [[ -n ${SSH_CONNECTION+defined} ]]; then
+      POD_NAME=$(
+        kubectl get pod -l "gatakko.github.io/user=$USER" \
+          --field-selector=status.phase=Running -o name
+      )
+      POD_NAME=${POD_NAME#pod/}
+      if [[ -n $POD_NAME ]]; then
+        CONNECT=y
+        [[ -n ${SSH_ORIGINAL_COMMAND+defined} ]] \
+        || read -p "[?] An instance is running. Connect to it? [Yn]: " CONNECT
+        [[ $CONNECT =~ [nN] ]] && POD_NAME=
+        unset CONNECT
+      fi
+    fi
+
+    ## SSH_ORIGINAL_COMMAND requires an existing pod
+    [[ -n ${SSH_ORIGINAL_COMMAND+defined} && -z $POD_NAME ]] \
+    && die "environment not found to run the given command"
+
+    ## Obtain flavor list
+    if [[ -z $POD_NAME ]]; then
+      FLAVORS=$(
+        ssh git@git.gatakko-core.svc.cluster.local \
+          adm login flavors-selectable "$USER" < /dev/null
+      )
+      [[ -n $FLAVORS ]] || die 'No image available.'
+    fi
+
+    ## Select flavor
+    FLAVOR=
+    if [[ -n $POD_NAME ]]; then
+      FLAVOR=$(
+        kubectl get pod "$POD_NAME" \
+          -o jsonpath='{.metadata.annotations.gatakko\.github\.io/flavor}'
+      )
+    elif [[ -n ${SSH_CONNECTION+defined} ]]; then
+      echo 'Available environments:'
+      jq -sr '
+        to_entries|.[]|"\(.key+1): \(.value.t) (\(.value.f|sub(".*/";"")))"
+      ' <<<"$FLAVORS"
+      read -p '[?] Select an environment: ' FLAVOR
+      FLAVOR=$(
+        jq -sr --arg i "$FLAVOR" '.[$i|tonumber?|.-1]|objects|.f' <<<"$FLAVORS"
+      )
+    elif [[ -n ${DISPLAY+defined} ]]; then
+      FLAVOR=$(
+        jq -r '"\(.f)\n\(.t) (\(.f|sub(".*/";"")))"' <<<"$FLAVORS" \
+        | yad --center --splash --list --no-headers \
+            --text 'Select Environment' --column ID:HD --column Title \
+            --width 500 --height 250 --borders=8 \
+            --print-column=1 --separator= \
+        || :
+      )
+    fi
+    readonly FLAVOR
+
+    if [[ -z $POD_NAME ]]; then
+      POD_PATCH=$(jq -c --arg f "$FLAVOR" 'select(.f == $f)|.p' <<<"$FLAVORS")
+      [[ -n $POD_PATCH ]] || die 'No environment selected.'
+    fi
+    readonly POD_PATCH
+    unset FLAVORS
+
+    ## Start timer
+    if [[ -n $POD_NAME || -n ${SSH_ORIGINAL_COMMAND+defined} ]]; then
+      :
+    elif [[ -n ${SSH_CONNECTION+defined} ]]; then
+      echo "Starting '${FLAVOR##*/}'. This could take some time." 1>&2
+      (
+        set +x
+        start=$(date +%s)
+        while :; do
+          now=$(date +%s)
+          elapse=$(($now - $start))
+          printf '%02d:%02d\r' $(($elapse / 60)) $(($elapse % 60)) 1>&2
+          sleep 1
+        done
+      ) &
+      TIMER_PID=$!
+    elif [[ -n ${DISPLAY+defined} ]]; then
+      (
+        set +x
+        start=$(date +%s)
+        while :; do
+          now=$(date +%s)
+          elapse=$(($now - $start))
+          printf '#%02d:%02d\n' $(($elapse / 60)) $(($elapse % 60))
+          [[ $elapse -le $LOGIN_TIMEOUT ]] \
+          && echo $((100 - $elapse * 100 / $LOGIN_TIMEOUT))
+          sleep 1
+        done
+      ) | yad --center --splash --progress \
+            --text="Starting '${FLAVOR##*/}'. This could take some time." \
+            --percentage=100 \
+            --width=350 --borders=8 --no-buttons &
+      TIMER_PID=$!
+    fi
+
+    ## determine X11 unix-domain socket
+    unset POD_X11_SOCK
+    if [[ ${DISPLAY:-} =~ ^.*:([0-9]+)(\.[0-9]+)?$ ]]; then
+      POD_X11_SOCK=${BASH_REMATCH[1]}
+      [[ -S /tmp/.X11-unix/X$POD_X11_SOCK ]] || unset POD_X11_SOCK
+    fi
+    readonly POD_X11_SOCK
+
+    ## Delete previously created pods
+    if [[ -z $POD_NAME ]]; then
+      syslog <<<"Deleting previously launched pods"
+      kubectl delete pod -l "gatakko.github.io/user=$USER" \
+        --now --ignore-not-found \
+      | syslog
+    fi
+
+    ## Create a new pod
+    if [[ -z $POD_NAME ]]; then
+      POD_RAND=$(head -c3 /dev/urandom | base32)
+      POD_RAND=${POD_RAND,,}
+      POD_NAME="$USER-${FLAVOR##*/}-${POD_RAND%%=*}"
+      unset POD_RAND
+      POD_UID=$(id -u "$USER")
+      POD_GID=$(id -g "$USER")
+      POD_NODE=$(kubectl get pod "$HOSTNAME" -o jsonpath='{.spec.nodeName}')
+
+      POD_PATCH_CMD=$(
+        jq -rj --arg user "$USER" --arg uid "$POD_UID" --arg gid "$POD_GID" '
+          .[]
+          |{"${USER}": $user, "${UID}": $uid, "${GID}": $gid,
+            "${UID_N}": $uid|tonumber, "${GID_N}": $gid|tonumber} as $env
+          |fromjson
+          |(..|select(in($env)?)) |= $env[.]
+          |"kubectl patch --local -f - --patch \(tojson|@sh) -o yaml | "
+        ' <<<"$POD_PATCH"
+      )
+
+      syslog <<<"Creating pod $POD_NAME on $POD_NODE"
+      eval '
+        with_template "$OPT_SESSION/pod-template" '"$POD_PATCH_CMD"' \
+          kubectl create -f - 2>&1 \
+        | syslog \
+        || die "Failed to create a container."
+      '
+      unset POD_PATCH_CMD
+      POD_RETAINED=$POD_NAME
+
+      kubectl wait pod "$POD_NAME" --for=condition=Ready \
+        --timeout "$LOGIN_TIMEOUT"s 2>&1 \
+      | syslog \
+      || die 'Error occurred while starting container.'
+
+      NODE=$(kubectl get pod "$POD_NAME" -o jsonpath='{.spec.nodeName}')
+      [[ $NODE = $POD_NODE ]] \
+      || die "Pod $POD_NAME is scheduled on $NODE, not $POD_NODE"
+      unset NODE
+    fi
+    readonly POD_NAME
+
+    ## Setup Xauth
+    unset POD_DISPLAY
+    if [[ -n ${POD_X11_SOCK+defined} ]]; then
+      POD_DISPLAY=$DISPLAY
+      AUTH=$(xauth list "$DISPLAY")
+      xauth add "$POD_NAME/unix:$POD_X11_SOCK" . "${AUTH##* }"
+      XAUTH_ADDED="$POD_NAME/unix:$POD_X11_SOCK"
+      unset AUTH
+    elif [[ ${DISPLAY:-} = *:* ]]; then
+      POD_DISPLAY=$(hostname -i)
+      POD_DISPLAY="$POD_DISPLAY:${DISPLAY##*:}"
+      AUTH=$(xauth list "$DISPLAY")
+      xauth add "$POD_DISPLAY" . "${AUTH##* }"
+      XAUTH_ADDED=$POD_DISPLAY
+      unset AUTH
+    fi
+    readonly POD_DISPLAY
+
+    ## Log
+    NOW=$(date +%s)
+    JSON=$(jq --arg p "$NEGICCO_PROTO" --arg u "$USER" \
+             --argjson t "$NOW" -c -n \
+             '{p:$p,u:$u,t:$t}')
+    ssh git@git.gatakko-core.svc.cluster.local \
+      adm login append-log "$FLAVOR" <<<"$JSON"
+    unset NOW
+    unset JSON
+    LOGGED_IN="$FLAVOR"
+
+    ## Stop timer
+    if [[ -n $TIMER_PID ]]; then
+      kill "$TIMER_PID"
+      TIMER_PID=
+    fi
+
+    ## Execute the given command
+    syslog <<<"Executing command on $POD_NAME"
+    ARGS=(-i)
+    [[ -t 0 ]] && ARGS+=(-t)
+    ARGS+=(-c flavor "$POD_NAME" -- env)
+    [[ -n ${POD_DISPLAY+defined} ]] && ARGS+=("DISPLAY=$POD_DISPLAY")
+    [[ -n ${SSH_ORIGINAL_COMMAND+defined} ]] \
+    && ARGS+=("SSH_ORIGINAL_COMMAND=$SSH_ORIGINAL_COMMAND")
+    [[ -n ${SSH_CONNECTION+defined} ]] \
+    && ARGS+=("SSH_CONNECTION=$SSH_CONNECTION")
+    kubectl exec "${ARGS[@]}" /opt/flavor/start
+
+  pod-template: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: "$POD_NAME"
+      labels:
+        gatakko.github.io/user: "$USER"
+      annotations:
+        gatakko.github.io/flavor: "$FLAVOR"
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      nodeName: "$POD_NODE"
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: flavor
+        image: "localhost:30500/gatakko/$FLAVOR:latest"
+        workingDir: "$HOME"
+        command: [/opt/flavor/init]
+        env:
+        - name: USER
+          value: "$USER"
+        - name: HOME
+          value: "$HOME"
+        - name: LANG
+          value: ja_JP.UTF-8
+        volumeMounts:
+        - mountPath: /var/lib/sss
+          name: sss
+        ${POD_X11_SOCK+- mountPath: /tmp/.X11-unix/X$POD_X11_SOCK}
+        ${POD_X11_SOCK+  name: x11-unix}
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: "/run/user/$POD_UID"
+          name: run-user
+        - mountPath: /opt/flavor
+          name: opt-flavor
+        - mountPath: "$HOME"
+          name: user-home
+          subPath: "${HOME#/home/users/}"
+        securityContext:
+          runAsUser: $POD_UID
+          runAsGroup: $POD_GID
+        resources:
+          requests:
+            memory: 2Gi
+          limits:
+            cpu: 1000m
+            memory: 4Gi
+      volumes:
+      - name: sss
+        hostPath:
+          path: /var/lib/gatakko/var/lib/sss
+          type: Directory
+      ${POD_X11_SOCK+- name: x11-unix}
+      ${POD_X11_SOCK+  hostPath:}
+      ${POD_X11_SOCK+    path: /var/lib/gatakko/tmp/.X11-unix/X$POD_X11_SOCK}
+      ${POD_X11_SOCK+    type: Socket}
+      - name: shm
+        emptyDir:
+          medium: Memory
+      - name: run-user
+        emptyDir:
+          medium: Memory
+      - name: opt-flavor
+        configMap:
+          name: opt-flavor
+          defaultMode: 0755
+      - name: user-home
+        persistentVolumeClaim:
+          claimName: user-home

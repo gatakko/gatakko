@@ -1,0 +1,4 @@
+dn: cn=crew,ou=groups,${LDAP_BASE_DN}
+objectClass: posixGroup
+cn: crew
+gidNumber: 10000

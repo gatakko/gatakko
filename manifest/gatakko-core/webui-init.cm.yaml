@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webui-init
+  namespace: gatakko-core
+data:
+  10-secret: |
+    #!/bin/bash
+    set -euC
+
+    install -d -m 700 /root/.ssh
+
+    cat <<END > /root/.ssh/config
+    UserKnownHostsFile /opt/webui/ssh/known_hosts
+    IdentityFile /opt/webui/ssh/webui
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    ControlMaster auto
+    ControlPath ~/.ssh/master-%r@%n:%p
+    ControlPersist 300
+    END
+
+  20-gitconfig: |
+    #!/bin/bash
+    git config --global init.defaultBranch main
+
+  30-pam: |
+    #!/bin/bash
+    set -euC
+
+    cat <<END > /etc/pam.d/webui
+    @include common-auth
+    @include common-account
+    auth required pam_succeed_if.so quiet user ingroup crew
+    END
+
+  40-apt-proxy: |
+    #!/bin/bash
+    set -euC
+    HOST=apt-proxy.gatakko-core.svc.cluster.local
+    PORT=3142
+    PROXY="http://$HOST:$PORT"
+    echo "Acquire::http::Proxy \"$PROXY\";" > /etc/apt/apt.conf.d/apt-proxy
+
+    # ensure apt-proxy is available
+    : < "/dev/tcp/$HOST/$PORT"

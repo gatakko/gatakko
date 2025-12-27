@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ldap
+  namespace: gatakko-core
+spec:
+  strategy:
+    type: Recreate # RollingUpdate might corrupse the database
+  selector:
+    matchLabels:
+      app: ldap
+  template:
+    metadata:
+      labels:
+        app: ldap
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: openldap
+        image: localhost:30500/gatakko/openldap
+        envFrom:
+        - configMapRef:
+            name: ldap-env
+        - secretRef:
+            name: ldap-env
+        ports:
+        - containerPort: 389
+        volumeMounts:
+        - mountPath: /etc/ldap/slapd.d
+          name: ldap
+          subPath: slapd.d
+        - mountPath: /var/lib/ldap
+          name: ldap
+          subPath: ldap
+        - mountPath: /entrypoint.d/50-init.d
+          name: ldap-init
+        - mountPath: /secret
+          name: ldap-secret
+        - mountPath: /cacert
+          name: cacert
+      volumes:
+      - name: ldap
+        persistentVolumeClaim:
+          claimName: ldap
+      - name: ldap-init
+        configMap:
+          name: ldap-init
+          defaultMode: 0755
+      - name: ldap-secret
+        secret:
+          secretName: ldap
+      - name: cacert
+        secret:
+          secretName: cacert

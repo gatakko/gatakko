@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslogd
+  namespace: gatakko-core
+spec:
+  ports:
+  - name: syslog
+    port: 514
+    protocol: UDP
+    targetPort: 514
+  selector:
+    app: syslogd

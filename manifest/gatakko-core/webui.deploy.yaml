@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webui
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: webui
+  template:
+    metadata:
+      labels:
+        app: webui
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: webui-front
+        image: localhost:30500/gatakko/webui-front
+        volumeMounts:
+        - mountPath: /secret
+          name: webui-secret
+      - name: webui-api
+        image: localhost:30500/gatakko/webui-api
+        env:
+        - name: GIT_SERVER
+          value: git.gatakko-core.svc.cluster.local
+        volumeMounts:
+        - mountPath: /var/lib/sss
+          name: sss
+        - mountPath: /entrypoint.d/50-init.d
+          name: webui-init
+        - mountPath: /opt/webui/ssh
+          name: webui-ssh
+        - mountPath: /opt/webui/sessions
+          name: webui-sessions
+      volumes:
+      - name: sss
+        hostPath:
+          path: /var/lib/gatakko/var/lib/sss
+          type: Directory
+      - name: webui-init
+        configMap:
+          name: webui-init
+          defaultMode: 0755
+      - name: webui-secret
+        secret:
+          secretName: webui
+      - name: webui-ssh
+        secret:
+          secretName: webui-ssh
+          defaultMode: 0400
+      - name: webui-sessions
+        emptyDir: {}

@@ -1,0 +1,11 @@
+{
+  "title": "管理者専用",
+  "owners": ["admin"],
+  "users": ["admin"],
+  "packages": [
+    "apache2-utils",
+    "jq",
+    "ldap-utils",
+    "sudo"
+  ]
+}

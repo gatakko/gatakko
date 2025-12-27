@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: lightdm
+  namespace: gatakko-user
+spec:
+  type: ClusterIP
+  externalTrafficPolicy: null
+  internalTrafficPolicy: Local

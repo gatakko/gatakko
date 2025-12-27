@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: admin
+  namespace: gatakko-core
+rules:
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list, patch]
+- apiGroups: [""]
+  resources: [pods/exec]
+  verbs: [create]
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [get]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [get, patch]
+- apiGroups: [apps]
+  resources: [deployments, daemonsets]
+  verbs: [get, patch]

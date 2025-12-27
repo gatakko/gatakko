@@ -1,0 +1,21 @@
+{
+  "title": "演習環境",
+  "owners": ["admin"],
+  "users": ["@all"],
+  "packages": [
+    "evince",
+    "ghostscript",
+    "gimp",
+    "gnuplot",
+    "inkscape",
+    "iputils-ping",
+    "lv",
+    "nkf",
+    "paps",
+    "texlive-lang-japanese",
+    "texlive-latex-extra",
+    "texlive-xetex",
+    "x11-apps",
+    "xdvik-ja"
+  ]
+}

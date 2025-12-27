@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sshd
+  namespace: gatakko-user
+spec:
+  selector:
+    matchLabels:
+      app: sshd
+  template:
+    metadata:
+      labels:
+        app: sshd
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      serviceAccountName: login
+      containers:
+      - name: sshd
+        image: localhost:30500/gatakko/sshd:latest
+        ports:
+        - containerPort: 22
+          name: ssh
+        volumeMounts:
+        - mountPath: /etc/ssh/keys
+          name: sshd-host-keys
+        - mountPath: /var/lib/sss
+          name: sss
+        - mountPath: /home/users
+          name: users
+        - mountPath: /entrypoint.d/50-init.d
+          name: sshd-init
+        - mountPath: /opt/session
+          name: opt-session
+        - mountPath: /opt/session/ssh
+          name: opt-session-ssh
+      volumes:
+      - name: sshd-host-keys
+        secret:
+          secretName: sshd-host-keys
+          defaultMode: 0400
+      - name: sss
+        hostPath:
+          path: /var/lib/gatakko/var/lib/sss
+          type: Directory
+      - name: users
+        persistentVolumeClaim:
+          claimName: user-home
+      - name: sshd-init
+        configMap:
+          name: sshd-init
+          defaultMode: 0755
+      - name: opt-session
+        configMap:
+          name: opt-session
+          defaultMode: 0755
+      - name: opt-session-ssh
+        secret:
+          secretName: opt-session-ssh

@@ -1,0 +1,5 @@
+#!/bin/bash
+tar -xzf /sss.tgz -C /
+
+# remove credential caches to avoid troubles in advance
+rm -f /var/lib/sss/db/*

@@ -1,0 +1,29 @@
+{
+  "title": "基本環境",
+  "owners": ["admin"],
+  "users": ["admin"],
+  "packages": [
+    "bzip2",
+    "curl",
+    "emacs",
+    "emacs-mozc",
+    "firefox-esr-l10n-ja",
+    "fcitx5-config-qt",
+    "git",
+    "less",
+    "man-db",
+    "mozc-utils-gui",
+    "openssh-client",
+    "procps",
+    "ristretto",
+    "tumbler",
+    "unzip",
+    "vim-tiny",
+    "wget",
+    "xz-utils",
+    "zip"
+  ],
+  "files": [
+    "src/usr/share/ca-certificates/cluster.local/ca.crt"
+  ]
+}

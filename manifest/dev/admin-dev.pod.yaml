@@ -1,0 +1,72 @@
+# For developers' convenience. AT YOUR OWN RISK. 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: admin-dev
+  namespace: gatakko-core
+  labels:
+    dev: admin-dev
+spec:
+  restartPolicy: Never
+  serviceAccountName: admin
+  imagePullSecrets:
+  - name: regcred
+  initContainers:
+  - name: init
+    image: localhost:30500/gatakko/admin
+    command:
+    - bash
+    - -c
+    - |
+      cat <<'END' > /entrypoint.d/50-init.d/10-init
+      #!/bin/bash
+      set -euC
+      /usr/sbin/update-ca-certificates -d
+      install -m 700 -d /root/.ssh
+      ln -s /secret/admin /root/.ssh/id_ed25519
+      echo auth required pam_succeed_if.so user in admin >> /etc/pam.d/sshd
+      echo session required pam_mkhomedir.so >> /etc/pam.d/sshd
+      set | sed '/^KUBERNETES_SERVICE_/!d' >> /etc/environment
+      echo 'Acquire::http::Proxy "http://apt-proxy.gatakko-core.svc.cluster.local:3142";' > /etc/apt/apt.conf.d/apt-proxy
+      git config --global user.name admin
+      git config --global user.email admin@cluster.local
+      END
+      chmod 755 /entrypoint.d/50-init.d/10-init
+    volumeMounts:
+    - mountPath: /entrypoint.d/50-init.d
+      name: entrypoint
+  containers:
+  - name: admin
+    image: localhost:30500/gatakko/admin
+    workingDir: /root
+    volumeMounts:
+    - mountPath: /var/lib/sss
+      name: sss
+    - mountPath: /usr/share/ca-certificates/cluster.local
+      name: cacert
+    - mountPath: /cacert
+      name: cacert
+    - mountPath: /secret
+      name: admin
+    - mountPath: /script
+      name: daily-script
+    - mountPath: /entrypoint.d/50-init.d
+      name: entrypoint
+  volumes:
+  - name: sss
+    hostPath:
+      path: /var/lib/gatakko/var/lib/sss
+      type: Directory
+  - name: cacert
+    secret:
+      secretName: cacert
+  - name: admin
+    secret:
+      secretName: admin
+      defaultMode: 0400
+  - name: daily-script
+    configMap:
+      name: daily-script
+      defaultMode: 0500
+  - name: entrypoint
+    emptyDir: {}

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy
+  namespace: gatakko-core
+data:
+  haproxy.cfg: |
+    defaults
+      timeout connect 10s
+      timeout client 4h
+      timeout server 4h
+    listen ssh
+      bind *:2222
+      mode tcp
+      server s1 sshd.gatakko-user.svc.cluster.local:22
+    listen vnc
+      bind *:5900
+      mode tcp
+      server s1 lightdm.gatakko-user.svc.cluster.local:5900
+    listen xrdp
+      bind *:3389
+      mode tcp
+      server s1 xrdp.gatakko-user.svc.cluster.local:3389

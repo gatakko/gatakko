@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: gatakko-core
+spec:
+  template:
+    spec:
+      containers:
+      - name: registry
+        env:
+        - name: REGISTRY_HTTP_TLS_CERTIFICATE
+          $patch: delete
+        - name: REGISTRY_HTTP_TLS_KEY
+          $patch: delete

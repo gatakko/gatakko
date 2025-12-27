@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apt-proxy
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: apt-proxy
+  template:
+    metadata:
+      labels:
+        app: apt-proxy
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: apt-cacher-ng
+        image: localhost:30500/gatakko/apt-cacher-ng
+        volumeMounts:
+        - mountPath: /entrypoint.d/50-init.d
+          name: apt-proxy-init
+        - mountPath: /secret
+          name: apt-proxy-secret
+        - mountPath: /var/cache/apt-cacher-ng
+          name: apt-proxy-pvc
+      volumes:
+      - name: apt-proxy-init
+        configMap:
+          name: apt-proxy-init
+          defaultMode: 0755
+      - name: apt-proxy-secret
+        secret:
+          secretName: apt-proxy
+          defaultMode: 0400
+      - name: apt-proxy-pvc
+        persistentVolumeClaim:
+          claimName: apt-proxy

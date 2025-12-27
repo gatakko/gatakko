@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldap-env
+  namespace: gatakko-core
+data:
+  LDAP_DOMAIN: cluster.local
+  LDAP_ORGANIZATION: cluster.local
+  LDAP_BASE_DN: dc=cluster,dc=local
+  LDAP_SSS_DN: cn=sss,dc=cluster,dc=local

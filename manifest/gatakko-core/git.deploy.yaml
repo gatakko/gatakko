@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git
+  namespace: gatakko-core
+spec:
+  selector:
+    matchLabels:
+      app: git
+  template:
+    metadata:
+      labels:
+        app: git
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      serviceAccountName: git
+      containers:
+      - name: gitolite
+        image: localhost:30500/gatakko/gitolite
+        ports:
+        - containerPort: 22
+          name: ssh
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - mountPath: /etc/ssh/keys
+          name: git-host-key
+        - mountPath: /entrypoint.d/50-init.d
+          name: git-init
+        - mountPath: /etc/msmtprc
+          subPath: msmtprc
+          name: git-msmtprc
+        - mountPath: /git
+          name: git-pvc
+        - mountPath: /gitkey
+          name: git-secret
+        - mountPath: /script
+          name: git-script
+        - mountPath: /run/job
+          name: run-job
+        - mountPath: /cacert
+          name: cacert
+      - name: worker
+        image: localhost:30500/gatakko/gitolite
+        command: [/usr/local/bin/pini]
+        args: [-c, /script/job-worker]
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+        env:
+        - name: TZ
+          value: Asia/Tokyo
+        volumeMounts:
+        - mountPath: /etc/msmtprc
+          subPath: msmtprc
+          name: git-msmtprc
+        - mountPath: /git
+          name: git-pvc
+        - mountPath: /script
+          name: git-script
+        - mountPath: /cacert
+          name: cacert
+        - mountPath: /run/job
+          name: run-job
+      volumes:
+      - name: git-host-key
+        secret:
+          secretName: git-host-key
+          defaultMode: 0400
+      - name: git-init
+        configMap:
+          name: git-init
+          defaultMode: 0755
+      - name: git-msmtprc
+        secret:
+          secretName: git-msmtprc
+      - name: git-pvc
+        persistentVolumeClaim:
+          claimName: git
+      - name: git-secret
+        secret:
+          secretName: git
+      - name: git-script
+        configMap:
+          name: git-script
+          defaultMode: 0755
+      - name: cacert
+        secret:
+          secretName: cacert
+      - name: run-job
+        emptyDir:
+          medium: Memory

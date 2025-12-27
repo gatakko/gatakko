@@ -1,0 +1,616 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-script
+  namespace: gatakko-core
+data:
+  run-buildkit: |
+    #!/bin/bash
+    set -euC
+    readonly SOURCE="$1"
+    readonly TARGET="$2"
+    readonly PREV="${3:-${TARGET%%,*}}"
+    readonly GL_USER="${GL_USER:-$(whoami)}"
+    : ${APT_PROXY:=http://apt-proxy.gatakko-core.svc.cluster.local:3142}
+    readonly APT_PROXY
+    cd "$SOURCE"
+
+    RAND=$(head -c3 /dev/urandom | base32)
+    RAND=${RAND,,}
+    readonly POD="buildkit-$GL_USER-${RAND%%=*}"
+
+    kubectl create -f - <<END
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: $POD
+      namespace: gatakko-builder
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: buildkit
+        image: docker.io/moby/buildkit:rootless
+        securityContext:
+          privileged: true
+          runAsNonRoot: true
+        resources:
+          requests:
+            cpu: 1000m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 16Gi
+        volumeMounts:
+        - mountPath: /home/user/.config/buildkit
+          name: buildkit-config
+        - mountPath: /home/user/.docker
+          name: buildkit-secret
+        - mountPath: /cacert
+          name: cacert
+        - mountPath: /home/user/.local/share/buildkit
+          name: buildkit-cache
+      volumes:
+      - name: buildkit-config
+        configMap:
+          name: buildkit
+      - name: buildkit-secret
+        secret:
+          secretName: buildkit
+      - name: cacert
+        secret:
+          secretName: cacert
+      - name: buildkit-cache
+        emptyDir:
+          sizeLimit: 16Gi
+    END
+    trap 'kubectl delete pod -n gatakko-builder "$POD"' EXIT
+
+    kubectl wait --for=condition=Ready -n gatakko-builder "pod/$POD"
+    kubectl exec -n gatakko-builder "$POD" -- mkdir /home/user/build
+    kubectl cp . "gatakko-builder/$POD:/home/user/build"
+    for DIR in *; do
+      [ -f "$DIR/Dockerfile" ] || continue
+      kubectl exec -n gatakko-builder "$POD" -- buildctl --wait build \
+        --frontend dockerfile.v0 \
+        --local context="/home/user/build/$DIR" \
+        --local dockerfile="/home/user/build/$DIR" \
+        --opt build-arg:http_proxy="$APT_PROXY" \
+        --output type=image,\"name="$TARGET"\",compression=estargz,push=true \
+        --import-cache type=registry,ref="$PREV" \
+        --export-cache type=inline
+    done
+
+  job-worker: |
+    #!/bin/bash
+    mkdir -p /run/job/q
+    cd /run/job/q
+
+    while :; do
+      JOB=`ls | head -n1`
+      if [[ -z $JOB ]]; then
+        inotifywait -q -q -e moved_to .
+      elif mv "/run/job/q/$JOB" "/run/job/$$.$JOB" 2> /dev/null; then
+        chmod +x "/run/job/$$.$JOB"
+        "/run/job/$$.$JOB" < /dev/null > /dev/null 2>&1
+        rm -rf "/run/job/$$.$JOB"
+      fi
+    done
+
+  job: |
+    #!/bin/bash
+    set -euC
+    readonly EXPORT="$(export)"
+    readonly GL_REPO
+    readonly GL_USER
+    readonly HASH
+    readonly JOB_DIR="$HOME/gatakko/job"
+
+    mkdir -p "$JOB_DIR"
+    JOB_LOG_FILE=$(mktemp -p "$JOB_DIR")
+    trap 'rm -f "$JOB_LOG_FILE"' EXIT
+    JOB_TMP=$(mktemp -p /run/job)
+    trap 'rm -f "$JOB_LOG_FILE" "$JOB_TMP"' EXIT
+    export JOB_LOG_FILE
+
+    {
+      echo '#!/bin/bash -e'
+      printf 'cd %q\n' "$PWD"
+      echo "$EXPORT"
+      declare -p JOB_LOG_FILE
+      echo "trap 'exec /script/job-end \$?' EXIT"
+      echo 'echo StartTime: "$(date -R)" >> "$JOB_LOG_FILE"'
+      echo 'echo >> "$JOB_LOG_FILE"'
+      echo 'exec >> "$JOB_LOG_FILE" 2>&1'
+      cat
+    } >> "$JOB_TMP"
+
+    {
+      [[ -z ${GL_USER:-} ]] || echo "User: $GL_USER"
+      [[ -z ${HASH:-} ]] || echo "Commit: $HASH"
+      echo "QueueTime: $(date -R)"
+    } >> "$JOB_LOG_FILE"
+
+    LOG_FILE=${GL_REPO////:}
+    : ${LOG_FILE:=:global:}
+    ln -f "$JOB_LOG_FILE" "$JOB_DIR/$LOG_FILE"
+    mkdir -p /run/job/q
+    mv "$JOB_TMP" "/run/job/q/$(date +%s.%N).$$.${JOB_TMP##*/}"
+    trap - EXIT
+
+  job-end: |
+    #!/bin/bash
+    set -euC
+    readonly STATUS="$1"
+    readonly JOB_LOG_FILE="$JOB_LOG_FILE"
+    readonly HASH
+    readonly GL_REPO_BASE
+    readonly GL_REPO
+    trap 'rm -f "$JOB_LOG_FILE"' EXIT
+    NOW=$(date -R)
+
+    TMP=$(mktemp)
+    trap 'rm -f "$JOB_LOG_FILE" "$TMP"' EXIT
+
+    cp "$JOB_LOG_FILE" "$TMP"
+    printf -v HEAD 'Status: %s\nEndTime: %s' "$STATUS" "$NOW"
+    cat - "$TMP" <<<"$HEAD" >| "$JOB_LOG_FILE"
+
+    [[ $STATUS = 0 ]] && exit 0
+    [[ -n ${GL_REPO_BASE:-} ]] || exit 0
+    [[ -n ${GL_REPO:-} ]] || exit 0
+    [[ -n ${HASH:-} ]] || exit 0
+
+    REPO="$GL_REPO_BASE/$GL_REPO.git"
+    MAIL_TO=$(git --git-dir="$REPO" cat-file -p "$HASH:manifest.json" \
+              | jq -sr '.[0].email?|strings')
+    [[ -n $MAIL_TO ]] || exit 0
+
+    msmtp "$MAIL_TO" <<END
+    To: $MAIL_TO
+    Date: $NOW
+    Subject: [$GL_REPO] Build failed
+    Content-Type: text/plain; charset=UTF-8
+
+    $(<"$JOB_LOG_FILE")
+    END
+
+  command-job-status: |
+    #!/bin/bash
+    set -euC
+    readonly GL_USER
+
+    usage () {
+      echo "Usage: job-status [-h] <repo>" 1>&2
+      exit 1
+    }
+
+    HEAD_ONLY=
+    while getopts h i; do
+      case "$i" in
+        h) HEAD_ONLY=yes ;;
+        *) usage ;;
+      esac
+    done
+    readonly HEAD_ONLY
+    shift $(($OPTIND - 1))
+    [[ $# -eq 1 ]] || usage
+    readonly GL_REPO="$1"
+    [[ -n $GL_REPO ]] || usage
+
+    if [[ -n ${GL_USER+defined} ]]; then
+      if ! gitolite access -q "$GL_REPO" "$GL_USER" R; then
+        echo 'Permission denied' 1>&2
+        exit 1
+      fi
+    fi
+
+    LOG="$HOME/gatakko/job/${GL_REPO////:}"
+    [[ -f $LOG ]] || exit 0
+    [[ -z $HEAD_ONLY ]] && exec cat "$LOG"
+    sed -n '/^$/q;p' "$LOG"
+
+  sign-manifest: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO="$1"
+    PATCH=$(jq -sc --arg name "$1" '.[0]|{f:$name, p:.patch?}')
+    SIGN=$(ssh-keygen -q -Y sign -f /gitkey/sign -n file <<<"$PATCH")
+    SIGN=${SIGN#*$'\n'}
+    SIGN=${SIGN%$'\n'*}
+    SIGN=${SIGN//$'\n'/}
+    echo "$SIGN"
+
+  verify-manifest: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO="$1"
+
+    SIGN=
+    EVAL=$(
+      jq -sr --arg name "$1" '
+        "SIGN=\(.[0].sign? // ""|@sh)
+         PATCH=\({f:$name,p:.[0].patch?}|@json|@sh)"
+      '
+    )
+    eval "$EVAL"
+    unset EVAL
+    [[ -n $SIGN ]] || exit 0
+
+    TMP=$(mktemp)
+    trap 'rm -f "$TMP"' EXIT
+    printf -- \
+      '-----BEGIN SSH SIGNATURE-----\n%s\n-----END SSH SIGNATURE-----' \
+      "$SIGN" >> "$TMP"
+    ssh-keygen -q -Y check-novalidate -f /gitkey/sign.pub -n file -s "$TMP" \
+      <<<"$PATCH"
+
+  adm-admin-sign: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO_BASE="$GL_REPO_BASE"
+    readonly GL_REPO="$1"
+
+    export GIT_DIR="$GL_REPO_BASE/$GL_REPO.git"
+    HASH=$(git rev-parse refs/heads/main 2> /dev/null || :)
+    [[ -n $HASH ]] || continue
+    MANIFEST=$(git cat-file -p "$HASH:manifest.json")
+    SIGN=$(/script/sign-manifest "$GL_REPO" <<<"$MANIFEST")
+    jq -s --arg sign "$SIGN" '
+      (.[0] | select(has("patch")?)) += {sign: $sign} | .[]
+    ' <<<"$MANIFEST"
+
+  get-manifest-jsonl: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO_BASE="$GL_REPO_BASE"
+
+    (cd "$GL_REPO_BASE" && find . -type d -name '*.git' -prune) \
+    | while IFS=$'\n' read GL_REPO; do
+        GL_REPO=${GL_REPO#./}
+        GL_REPO=${GL_REPO%.git}
+        [[ $GL_REPO =~ ^flavor($|/) ]] || continue
+        export GIT_DIR="$GL_REPO_BASE/$GL_REPO.git"
+        HASH=$(git rev-parse refs/heads/main 2> /dev/null || :)
+        [[ -n $HASH ]] || continue
+        MANIFEST=$(git cat-file -p "$HASH:manifest.json")
+        SIGN=$(/script/verify-manifest "$GL_REPO" <<<"$MANIFEST" || echo N)
+        jq -sc --arg key "$GL_REPO" --arg hash "$HASH" --arg sign "$SIGN" '
+          .[0]
+          | if $sign=="" then objects else del(.patch)? end
+          | {key: $key, value: ., hash: $hash}
+        ' <<<"$MANIFEST" || :
+      done 2> /dev/null
+
+  make-index-json: |
+    #!/bin/bash
+    set -euC
+
+    /script/get-manifest-jsonl \
+    | jq -c -s '
+        map(select(.value.title // "" | strings)?
+            | select(.value.startTime // 0 | numbers)?
+            | select(.value.endTime // 0 | numbers)?
+            | select(.value.days // [] | arrays | all(type == "number"))?
+            | select(.value.users // [] | arrays | all(type == "string"))?
+            | select(.value.patch // {} | objects)?
+            | .value += {from: .key|sub("(?:^|/)[^/]+$"; "")})
+        | from_entries as $all
+        | def isAlive: (.dead|not) and (.from == "" or ($all[.from]|isAlive));
+          map(select(.value | isAlive)?)
+        | sort_by(.key)
+        | with_entries({key:.value.key, value:.key}) as $index
+        | def ancestors:
+            if . == "" then [] else ($all[.].from|ancestors) + [$index[.]] end;
+          map({f:.key, h:.hash, a: (.value.from|ancestors)}
+              + (.value|{t:.title, s:.startTime, e:.endTime, d:.days})
+              + (.value.patch|{p: (if . then @json else "" end)})
+              | with_entries(select(.value and .value != "" and .value != [])))
+          as $flavors
+        | map(.key as $value | .value.users.[]? | {key:., value:$value})
+        | group_by(.key)
+        | map({key: .[0].key, value: map($index[.value])})
+        | {flavors:$flavors, users:from_entries}
+      '
+
+  update-index-json: |
+    #!/bin/bash
+    set -euC
+    TMP=$(mktemp)
+    trap 'rm -f "$TMP"' EXIT
+    /script/make-index-json >> "$TMP"
+    cp "$TMP" "$HOME/gatakko/index.json"
+
+  build-index-json: |
+    #!/bin/bash
+    set -euC
+    mkdir -p "$HOME/gatakko"
+    { > "$HOME/gatakko/index.json"; } 2> /dev/null || :
+    flock -F "$HOME/gatakko/index.json" /script/update-index-json
+
+  adm-webui-flavors-available: |
+    #!/bin/bash
+    set -euC
+
+    flock -F -s "$HOME/gatakko/index.json" \
+      jq -c '.flavors | map({id:.f} + if .t then {title:.t} else {} end)' \
+      "$HOME/gatakko/index.json" 2> /dev/null \
+    || echo '[]'
+
+  adm-login-flavors-selectable: |
+    #!/bin/bash
+    set -euC
+    readonly LOGIN_USER="$1"
+
+    NOW=($(date '+%s %w'))
+    flock -F -s "$HOME/gatakko/index.json" \
+      jq -c --arg user "$LOGIN_USER" \
+      --argjson now "${NOW[0]}" --argjson day "${NOW[1]}" '
+        .flavors as $flavors
+        | .users["!" + $user] as $owner
+        | .users[$user] + .users["@all"] // []
+        | map(select($flavors[.] | (.s//0) <= $now and $now <= (.e//infinite))?)
+        | . + $owner
+        | unique
+        | map($flavors[.])
+        | sort_by(isempty(.d.[]? | select(. == $day)))
+        | .[]
+        | [[.a.[]? | $flavors[.].p] + [.p] | .[] | strings] as $p
+        | {f:.f, t: (.t // ""), p: $p}
+      ' "$HOME/gatakko/index.json" \
+    || echo '[]'
+
+  foreach-flavor: |
+    #!/bin/bash
+    set -euC
+    GL_REPO="${GL_REPO:-}"
+    declare -rx GL_REPO_BASE="${GL_REPO_BASE:=$HOME/repositories}"
+
+    printf -v CMD " %q" "$@"
+    CMD="$CMD && /script/foreach-flavor $CMD"
+    eval "$(
+      flock -F -s "$HOME/gatakko/index.json" \
+        jq -r --arg prefix "$GL_REPO${GL_REPO:+/}" '
+          .flavors.[]
+          | select((.f|startswith($prefix))
+                   and (.f|ltrimstr($prefix)|contains("/")|not))
+          | "GL_REPO=\(.f) HASH=\(.h) /script/job <<<\"$CMD\""
+        ' "$HOME/gatakko/index.json" 2> /dev/null
+    )"
+
+  make-dockerfile: |
+    #!/bin/bash
+    set -euC
+    readonly WORKDIR="$1"
+    readonly FILES="${2:-}"
+    readonly GL_REPO="$GL_REPO"
+    : ${REGISTRY:=registry.gatakko-core.svc.cluster.local:5000}
+    readonly REGISTRY
+
+    PACKAGES=$(jq -sr '[.[0].packages.[]|strings]|@sh' "$WORKDIR/manifest.json")
+    FROM=xfce4
+    [[ $GL_REPO =~ / ]] && FROM=${GL_REPO%/*}
+
+    echo "FROM $REGISTRY/gatakko/$FROM AS base"
+    if [[ -n $PACKAGES ]]; then
+      if [[ -d $WORKDIR/src/usr/share/keyrings ]]; then
+        echo 'COPY src/usr/share/keyrings/ /usr/share/keyrings/'
+      fi
+      if [[ -d $WORKDIR/src/etc/apt/sources.list.d ]]; then
+        echo 'COPY src/etc/apt/sources.list.d /etc/apt/sources.list.d/'
+      fi
+      echo "RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\"
+      echo "--mount=type=cache,target=/var/lib/apt/lists,sharing=locked \\"
+      echo "apt-get update \\"
+      echo "&& DEBIAN_FRONTEND=noninteractive \\"
+      echo "apt-get install --no-install-recommends -y \\"
+      echo "$PACKAGES"
+    fi
+    if [[ -d $WORKDIR/src ]]; then
+      echo 'COPY src/ /'
+    fi
+    if [[ $FILES =~ :src(/[^:/]+)*/ca\.crt: ]]; then
+      echo 'RUN update-ca-certificates -d'
+    fi
+    if [[ $FILES == *:Dockerfile:* ]]; then
+      cat "$WORKDIR/Dockerfile"
+    fi
+
+  build-flavor: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO_BASE="$GL_REPO_BASE"
+    readonly GL_REPO="$GL_REPO"
+    : ${REGISTRY:=registry.gatakko-core.svc.cluster.local:5000}
+    readonly REGISTRY
+    readonly HASH="${HASH:-refs/heads/main}"
+
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    mkdir "$TMP/base"
+    (
+      unset GIT_DIR
+      umask 0022
+      cd "$TMP/base"
+      git init
+      git remote add origin "$GL_REPO_BASE/$GL_REPO.git"
+      git fetch --depth 1 origin "$HASH"
+      git reset --hard FETCH_HEAD
+      rm -rf .git
+    )
+
+    FILES=$(jq -sr '
+      [.[0]|select(.dead)|"dead"] as $d
+      | [.[0].files.[]?|strings|select(contains(":")|not)]
+      | "\($d|join("")):\(.|join(":")):"
+    ' "$TMP/base/manifest.json")
+
+    [[ $FILES == dead:* ]] && exit
+
+    if [[ $FILES =~ :(src(/[^:/]+)*)/ca\.crt: ]]; then
+      mkdir -p "$TMP/base/${BASH_REMATCH[1]}"
+      cp /cacert/ca.crt "$TMP/base/${BASH_REMATCH[1]}"
+    fi
+
+    /script/make-dockerfile "$TMP/base" "$FILES" > "$TMP/Dockerfile"
+    mv "$TMP/Dockerfile" "$TMP/base/Dockerfile"
+
+    /script/run-buildkit "$TMP" "$REGISTRY/gatakko/$GL_REPO:latest"
+
+  hook-post-update: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO_BASE="$GL_REPO_BASE"
+    declare GL_REPO="$GL_REPO"
+    readonly GL_USER="$GL_USER"
+
+    # hook only for flavor/*
+    [[ $GL_REPO =~ ^flavor($|/) ]] || exit 0
+
+    # job runs only on main branch
+    HASH=
+    for REF in "$@"; do
+      [[ $REF = refs/heads/main ]] && HASH=$REF
+    done
+    [[ -n $HASH ]] || exit 0
+    HASH=$(git rev-parse "$HASH")
+    declare -rx HASH
+
+    # abort if commit message includes `[skip ci]` or `[ci skip]`
+    MESSAGE=$(git show -s --format=%B "$HASH")
+    [[ $MESSAGE =~ \[(skip\ ci|ci\ skip)\] ]] && exit 0
+
+    /script/build-index-json
+
+    /script/job <<END
+    /script/build-flavor
+    /script/foreach-flavor /script/build-flavor
+    END
+
+  apt-upgrade: |
+    #!/bin/bash
+    set -euC -o pipefail
+    readonly GL_REPO_BASE="$GL_REPO_BASE"
+    readonly GL_REPO="$GL_REPO"
+    readonly HASH="${HASH:-refs/heads/main}"
+    : ${REGISTRY:=registry.gatakko-core.svc.cluster.local:5000}
+    readonly REGISTRY
+
+    export GIT_DIR="$GL_REPO_BASE/$GL_REPO.git"
+    TARGET="$REGISTRY/gatakko/$GL_REPO"
+
+    SKIP=$(git cat-file -p "$HASH:manifest.json" \
+           | jq -sr '.[0]|select(.disableAptUpgrade)?|"yes"')
+    if [[ -n $SKIP ]]; then
+      echo 'apt upgrade is disabled for $GL_REPO' 1>&2
+      exit 0
+    fi
+
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    mkdir "$TMP/proj"
+
+    cat <<END > "$TMP/proj/Dockerfile"
+    FROM $TARGET:latest
+    RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \\
+    apt-get update \\
+    && DEBIAN_FRONTEND=noninteractive \\
+    apt-get upgrade --no-install-recommends -y
+    END
+
+    /script/run-buildkit "$TMP" "$TARGET:latest"
+
+  apt-upgrade-all: |
+    #!/bin/bash
+    GL_REPO= exec /script/foreach-flavor /script/apt-upgrade
+
+  rebuild-core: |
+    #!/bin/bash
+    set -euC
+    readonly POD="${POD:=rebuild-core}"
+    : ${APT_PROXY:=http://apt-proxy.gatakko-core.svc.cluster.local:3142}
+    readonly APT_PROXY
+
+    kubectl create -f - <<END
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: $POD
+      namespace: gatakko-builder
+    spec:
+      restartPolicy: Never
+      serviceAccountName: builder
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: build
+        image: localhost:30500/gatakko/build-images
+        env:
+        - name: APT_PROXY
+          value: "${APT_PROXY}"
+    END
+    trap 'kubectl delete -n gatakko-builder "pod/$POD"' EXIT
+    kubectl wait --for=condition=Ready -n gatakko-builder "pod/$POD"
+    kubectl attach -n gatakko-builder "$POD"
+
+  rebuild-all: |
+    #!/bin/bash
+    set -euC
+    GL_REPO= /script/job <<END
+    /script/rebuild-core
+    /script/foreach-flavor /script/build-flavor
+    END
+
+  adm-login-append-log: |
+    #!/bin/bash
+    set -euC
+    readonly GL_REPO="$1"
+    [[ -n $GL_REPO ]] || exit 1
+    mkdir -p /git/gatakko/log
+    cat >> "/git/gatakko/log/${GL_REPO////:}"
+
+  command-login-log: |
+    #!/bin/bash
+    set -euC
+    readonly GL_USER
+
+    usage () {
+      echo "Usage: login-log [-n <number>] <repo>" 1>&2
+      exit 1
+    }
+
+    NUM_LINES=
+    while getopts n: i; do
+      case "$i" in
+        n) NUM_LINES=$OPTARG ;;
+        *) usage ;;
+      esac
+    done
+    readonly NUM_LINES
+    [[ $NUM_LINES =~ [^0-9] ]] && usage
+    shift $(($OPTIND - 1))
+    [[ $# -eq 1 ]] || usage
+    readonly GL_REPO="$1"
+    [[ -n $GL_REPO ]] || usage
+
+    if [[ -n ${GL_USER+defined} ]]; then
+      if ! gitolite access -q "$GL_REPO" "$GL_USER" R; then
+        echo 'Permission denied' 1>&2
+        exit 1
+      fi
+    fi
+
+    LOG="$HOME/gatakko/log/${GL_REPO////:}"
+    [[ -f $LOG ]] || exit 0
+    [[ -z $NUM_LINES ]] && exec cat "$LOG"
+    tail -n "$NUM_LINES" "$LOG"
+
+  command-adm: |
+    #!/bin/bash
+    set -euC
+    readonly GL_USER="$GL_USER"
+    readonly SCRIPT="/script/adm-$1-$2"
+    [[ -x $SCRIPT ]] || exit 1
+    [[ $GL_USER == admin || $GL_USER == $1 ]] || exit 1
+    shift 2
+    exec "$SCRIPT" "$@"

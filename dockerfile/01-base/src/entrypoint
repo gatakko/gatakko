@@ -1,0 +1,2 @@
+#!/bin/bash
+run-parts --exit-on-error /entrypoint.d && exec "$@"

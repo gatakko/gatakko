@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sshd-init
+  namespace: gatakko-user
+data:
+  10-env: |
+    #!/bin/bash
+    set -euC
+    set | sed '/^KUBERNETES_SERVICE_[^=]*=/!d' >> /etc/environment
+    echo NEGICCO_PROTO=SSH >> /etc/environment
+
+  20-config: |
+    #!/bin/bash
+    set -euC
+    echo 'X11UseLocalhost no' >> /etc/ssh/sshd_config
+    echo 'ForceCommand /opt/session/start' >> /etc/ssh/sshd_config
+    echo 'AcceptEnv NEGICCO_FLAVOR' >> /etc/ssh/sshd_config
+
+  30-mkhomedir: |
+    #!/bin/bash
+    set -euC
+    echo 'session required pam_mkhomedir.so' >> /etc/pam.d/sshd

@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: phpldapadmin-init
+  namespace: gatakko-core
+data:
+  10-apache2: |
+    #!/bin/bash
+    set -euC
+
+    echo ServerName phpldapadmin.ldap.svc.cluster.local \
+      > /etc/apache2/sites-enabled/999-server-name.conf
+
+    a2ensite default-ssl
+    a2enmod ssl
+
+  20-apache2-ssl: |
+    #!/bin/bash
+    set -euC
+    printf -v T '\t'
+    patch -s -t -p0 <<END
+    --- etc/apache2/sites-available/default-ssl.conf.orig
+    +++ etc/apache2/sites-available/default-ssl.conf
+    @@ -28,8 +28,8 @@
+     ${T}#   /usr/share/doc/apache2/README.Debian.gz for more info.
+     ${T}#   If both key and certificate are stored in the same file, only the
+     ${T}#   SSLCertificateFile directive is needed.
+    -${T}SSLCertificateFile      /etc/ssl/certs/ssl-cert-snakeoil.pem
+    -${T}SSLCertificateKeyFile   /etc/ssl/private/ssl-cert-snakeoil.key
+    +${T}SSLCertificateFile      /secret/phpldapadmin.crt
+    +${T}SSLCertificateKeyFile   /secret/phpldapadmin.key
+
+     ${T}#   Server Certificate Chain:
+     ${T}#   Point SSLCertificateChainFile at a file containing the
+    END
+
+  30-phpldapadmin: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<END
+    --- etc/phpldapadmin/config.php.orig
+    +++ etc/phpldapadmin/config.php
+    @@ -321,14 +321,14 @@
+        'ldaps://ldap.example.com/',
+        'ldapi://%2fusr%local%2fvar%2frun%2fldapi'
+                (Unix socket at /usr/local/var/run/ldap) */
+    -\$servers->setValue('server','host','127.0.0.1');
+    +\$servers->setValue('server','host','ldap.gatakko-core.svc.cluster.local');
+
+     /* The port your LDAP server listens on (no quotes). 389 is standard. */
+     // \$servers->setValue('server','port',389);
+
+     /* Array of base DNs of your LDAP server. Leave this blank to have phpLDAPadmin
+        auto-detect it for you. */
+    -\$servers->setValue('server','base',array('dc=example,dc=com'));
+    +\$servers->setValue('server','base',array('$LDAP_BASE_DN'));
+
+     /* Five options for auth_type:
+        1. 'cookie': you will login via a web form, and a client-side cookie will
+    @@ -355,7 +355,7 @@
+        auth_type, then you can also specify the bind_id/bind_pass here for searching
+        the directory for users (ie, if your LDAP server does not allow anonymous
+        binds. */
+    -\$servers->setValue('login','bind_id','cn=admin,dc=example,dc=com');
+    +\$servers->setValue('login','bind_id','');
+     #  \$servers->setValue('login','bind_id','cn=Manager,dc=example,dc=com');
+
+     /* Your LDAP password. If you specified an empty bind_id above, this MUST also
+    @@ -365,10 +365,12 @@
+
+     /* Use TLS (Transport Layer Security) to connect to the LDAP server. */
+     // \$servers->setValue('server','tls',false);
+    +\$servers->setValue('server','tls',true);
+
+     /* TLS Certificate Authority file (overrides ldap.conf, PHP 7.1+) */
+     // \$servers->setValue('server','tls_cacert',null);
+     #  \$servers->setValue('server','tls_cacert','/etc/openldap/certs/ca.crt');
+    +\$servers->setValue('server','tls_cacert','/cacert/ca.crt');
+
+     /* TLS Certificate Authority hashed directory (overrides ldap.conf, PHP 7.1+) */
+     // \$servers->setValue('server','tls_cacertdir',null);
+    @@ -436,6 +438,7 @@
+     /* Default password hashing algorithm. One of md5, ssha, sha, md5crpyt, smd5,
+        blowfish, crypt or leave blank for now default algorithm. */
+     // \$servers->setValue('appearance','pla_password_hash','md5');
+    +\$servers->setValue('appearance','pla_password_hash','ssha');
+
+     /* If you specified 'cookie' or 'session' as the auth_type above, you can
+        optionally specify here an attribute to use when logging in. If you enter
+    @@ -503,6 +506,7 @@
+     /* The minimum number to use when searching for the next available number
+        (only when 'search' is used for auto_number. */
+     // \$servers->setValue('auto_number','min',array('uidNumber'=>1000,'gidNumber'=>500));
+    +\$servers->setValue('auto_number','min',array('uidNumber'=>10000,'gidNumber'=>10000));
+
+     /* If you set this, then phpldapadmin will bind to LDAP with this user ID when
+        searching for the uidnumber. The idea is, this user id would have full
+    @@ -516,6 +520,7 @@
+
+     /* Enable anonymous bind login. */
+     // \$servers->setValue('login','anon_bind',true);
+    +\$servers->setValue('login','anon_bind',false);
+
+     /* Use customized page with prefix when available. */
+     #  \$servers->setValue('custom','pages_prefix','custom_');
+    @@ -594,13 +599,13 @@
+     /*
+     \$servers->newServer('ldap_pla');
+     \$servers->setValue('server','name','LDAP Server');
+    -\$servers->setValue('server','host','127.0.0.1');
+    +\$servers->setValue('server','host','ldap.gatakko-core.svc.cluster.local');
+     \$servers->setValue('server','port',389);
+     \$servers->setValue('server','base',array(''));
+     \$servers->setValue('login','auth_type','cookie');
+     \$servers->setValue('login','bind_id','');
+     \$servers->setValue('login','bind_pass','');
+    -\$servers->setValue('server','tls',false);
+    +\$servers->setValue('server','tls',true);
+
+     # SASL auth
+     \$servers->setValue('login','auth_type','sasl');
+    @@ -611,7 +616,7 @@
+     \$servers->setValue('sasl','authz_id_replacement','\$1');
+     \$servers->setValue('sasl','props',null);
+
+    -\$servers->setValue('appearance','pla_password_hash','md5');
+    +\$servers->setValue('appearance','pla_password_hash','ssha');
+     \$servers->setValue('login','attr','dn');
+     \$servers->setValue('login','fallback_dn',false);
+     \$servers->setValue('login','class',null);
+    @@ -621,11 +626,11 @@
+     \$servers->setValue('auto_number','enable',true);
+     \$servers->setValue('auto_number','mechanism','search');
+     \$servers->setValue('auto_number','search_base',null);
+    -\$servers->setValue('auto_number','min',array('uidNumber'=>1000,'gidNumber'=>500));
+    +\$servers->setValue('auto_number','min',array('uidNumber'=>10000,'gidNumber'=>10000));
+     \$servers->setValue('auto_number','dn',null);
+     \$servers->setValue('auto_number','pass',null);
+
+    -\$servers->setValue('login','anon_bind',true);
+    +\$servers->setValue('login','anon_bind',false);
+     \$servers->setValue('custom','pages_prefix','custom_');
+     \$servers->setValue('unique','attrs',array('mail','uid','uidNumber'));
+     \$servers->setValue('unique','dn',null);
+    END

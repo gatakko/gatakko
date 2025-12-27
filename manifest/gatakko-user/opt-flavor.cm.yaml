@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opt-flavor
+  namespace: gatakko-user
+data:
+  init: |
+    #!/usr/bin/perl
+    use strict;
+    use warnings;
+    if (!fork()) { for (;;) { sleep } }
+    my @signals = qw(INT HUP PIPE QUIT TERM);
+    foreach (@signals) { $SIG{$_} = sub { exit 1 } }
+    1 until (wait < 0);
+    END {
+      foreach (@signals) { $SIG{$_} = 'IGNORE' }
+      kill 'TERM', -1 if $$ == 1;
+      1 until (wait < 0);
+    }
+
+  start: |
+    #!/bin/bash
+    set -euC
+
+    ulimit -c 0
+
+    if [[ -n ${SSH_CONNECTION+defined} ]]; then
+      USER_SHELL=$(getent passwd "$USER")
+      USER_SHELL=${USER_SHELL##*:}
+      if [[ -z ${SSH_ORIGINAL_COMMAND+defined} ]]; then
+        exec "$USER_SHELL" -l
+      else
+        declare +x SSH_ORIGINAL_COMMAND
+        exec "$USER_SHELL" -c "$SSH_ORIGINAL_COMMAND"
+      fi
+    fi
+
+    # without this, kubectl exec does not terminate.
+    exec >> "$HOME/.xsession-errors" 2>&1
+
+    export GTK_IM_MODULE=fcitx
+    export QT_IM_MODULE=fcitx
+    export XMODIFIERS=@im=fcitx
+
+    eval $(dbus-launch --sh-syntax)
+
+    fcitx5 -d
+
+    exec startxfce4

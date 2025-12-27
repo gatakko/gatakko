@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-init
+  namespace: gatakko-core
+data:
+  10-env: |
+    #!/bin/bash
+    set -euC
+    set | sed '/^KUBERNETES_SERVICE_[^=]*=/!d' >> /etc/environment
+
+  20-config: |
+    #!/bin/bash
+    set -euC
+
+    patch -s -t -p0 <<'END'
+    --- etc/ssh/sshd_config.orig
+    +++ etc/ssh/sshd_config
+    @@ -16,8 +16,6 @@
+     #ListenAddress 0.0.0.0
+     #ListenAddress ::
+
+    -HostKey /etc/ssh/keys/ssh_host_rsa_key
+    -HostKey /etc/ssh/keys/ssh_host_ecdsa_key
+     HostKey /etc/ssh/keys/ssh_host_ed25519_key
+
+     # Ciphers and keying
+    @@ -111,10 +109,8 @@
+     #Banner none
+
+     # Allow client to pass locale and color environment variables
+    -AcceptEnv LANG LC_* COLORTERM NO_COLOR
+
+     # override default of no subsystems
+    -Subsystem	sftp	/usr/lib/openssh/sftp-server
+
+     # Example of overriding settings on a per-user basis
+     #Match User anoncvs
+    END
+
+    cat <<END > /etc/ssh/sshd_config.d/gitolite.conf
+    AllowUsers git
+    DisableForwarding yes
+    KbdInteractiveAuthentication no
+    PasswordAuthentication no
+    PermitRootLogin no
+    PermitTTY no
+    PrintMotd no
+    END
+
+  30-gitolite_rc: |
+    #!/bin/bash
+    set -euC
+
+    sed -i -e '
+    /^ *# LOCAL_CODE *=> *"\$ENV{HOME}\/local",$/s/# //
+    ' /git/.gitolite.rc
+
+    mkdir -p /git/local/commands /git/local/hooks/common
+
+    COMMANDS=
+    for i in /script/command-*; do
+      ln -sf "$i" "/git/local/commands/${i#/script/command-}"
+      COMMANDS="$COMMANDS'${i#/script/command-}',"
+    done
+    sed -i -e '
+    /^ *ENABLE => \[/s/\[.*/\['"$COMMANDS"'/
+    ' /git/.gitolite.rc
+
+    for i in /script/hook-*; do
+      ln -sf "$i" "/git/local/hooks/common/${i#/script/hook-}"
+    done
+    su - git -c 'gitolite setup --hooks-only'
+
+  40-gitolite-admin-keydir: |
+    #!/bin/bash
+    set -euC
+    [[ -d /gitkey ]] || exit 0
+    [[ $(whoami) = git ]] || exec su git -s "$0"
+    TMP=$(mktemp -d -p /git)
+    trap 'rm -rf "$TMP"' EXIT
+
+    git clone /git/repositories/gitolite-admin.git "$TMP"
+    cd "$TMP"
+    cp /gitkey/*.pub "$TMP/keydir"
+    git add keydir
+    if ! git diff --cached --quiet; then
+      git config user.name admin
+      git config user.email admin@cluster.local
+      git commit -m 'Add system client public keys'
+      gitolite push
+    fi

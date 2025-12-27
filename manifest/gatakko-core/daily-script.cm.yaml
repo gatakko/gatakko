@@ -1,0 +1,135 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: daily-script
+  namespace: gatakko-core
+data:
+  start: |
+    #!/bin/bash
+    set -euC
+    DAY=($(date '+%w %U'))
+    WDAY=${DAY[0]}
+    WEEK=${DAY[1]}
+
+    # on every other Sunday
+    if [[ $WDAY -eq 0 && $(( $WEEK % 2 )) -eq 1 ]]; then
+      if [[ $WEEK -eq 1 ]]; then
+        exec /script/yearly
+      elif [[ $(( ($WEEK - 1) % 4 )) -eq 0 ]]; then
+        exec /script/monthly
+      else
+        exec /script/weekly
+      fi
+    else
+      exec /script/daily
+    fi
+
+  daily: |
+    #!/bin/bash
+    set -euC
+    /script/registry-gc
+    /script/run-on-git /script/apt-upgrade-all
+
+  weekly: |
+    #!/bin/bash
+    set -euC
+    /script/registry-gc
+    /script/run-on-git /script/rebuild-all
+
+  monthly: |
+    #!/bin/bash
+    set -euC
+    ln -s /cacert/ca.crt /root
+    ln -s /secret/ca.key /root
+    /script/update-server-cert-all
+    /script/weekly
+
+  yearly: |
+    #!/bin/bash
+    set -euC
+    /script/update-ca-cert
+    /script/update-server-cert-all
+    /script/weekly
+
+  run-on-git: |
+    #!/bin/bash
+    set -euC
+    POD=($(kubectl get pod -l app=git -o name))
+    POD=${POD[0]}
+    kubectl exec "$POD" -c gitolite -- su - git -c "$*"
+
+  registry-gc: |
+    #!/bin/bash
+    set -euC
+    POD=($(kubectl get pod -l app=registry -o name))
+    POD=${POD[0]}
+    kubectl exec "$POD" -- \
+      registry garbage-collect /etc/distribution/config.yml -m
+
+  update-ca-cert: |
+    #!/bin/bash
+    set -euC
+
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+
+    rm -f /root/ca.key /root/ca.crt
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+      -subj "/CN=Cluster Local CA" \
+      -addext keyUsage=critical,keyCertSign,cRLSign \
+      -addext basicConstraints=critical,CA:true \
+      -addext extendedKeyUsage=serverAuth,clientAuth \
+      -days 395 \
+      -noenc -keyout /root/ca.key -out /root/ca.crt
+
+    jq -Rsc '{data:{"ca.key":@base64}}' /root/ca.key > "$TMP/key.patch.json"
+    jq -Rsc '{data:{"ca.crt":@base64}}' /root/ca.crt > "$TMP/crt.patch.json"
+
+    kubectl patch -n gatakko-core secret admin \
+      --patch-file="$TMP/key.patch.json"
+    kubectl patch -n gatakko-builder secret cacert \
+      --patch-file="$TMP/crt.patch.json"
+    kubectl patch -n gatakko-core secret cacert \
+      --patch-file="$TMP/crt.patch.json"
+
+    # update /cacert/ca.crt in git pod
+    NOW=$(date +%s)
+    kubectl annotate --overwrite pod -n gatakko-core -l app=git "update_ca=$NOW"
+
+  update-server-cert: |
+    #!/bin/bash
+    set -euC
+    readonly NAMESPACE="$1"
+    readonly NAME="$2"
+    readonly TYPE="${3:-deploy}"
+    readonly CN="$NAME.$NAMESPACE.svc.cluster.local"
+
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+
+    kubectl get secret -o json -n "$NAMESPACE" "$NAME" > "$TMP/secret.json" \
+    || exit 0
+
+    openssl req -x509 -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+      -CA /root/ca.crt -CAkey /root/ca.key \
+      -subj "/CN=$CN" \
+      -addext keyUsage=critical,digitalSignature,keyEncipherment \
+      -addext basicConstraints=critical,CA:false \
+      -addext extendedKeyUsage=serverAuth,clientAuth \
+      -addext "subjectAltName=DNS:$CN" \
+      -days 40 \
+      -noenc -keyout "$TMP/key" -out "$TMP/crt"
+
+    jq -Rsc --arg k "$NAME.key" '{($k):@base64}' "$TMP/key" > "$TMP/key.json"
+    jq -Rsc --arg k "$NAME.crt" '{($k):@base64}' "$TMP/crt" >> "$TMP/crt.json"
+    jq -s '{data:add}' "$TMP/key.json" "$TMP/crt.json" > "$TMP/patch.json"
+    kubectl patch -f "$TMP/secret.json" --patch-file="$TMP/patch.json"
+    kubectl rollout restart -n "$NAMESPACE" "$TYPE" "$NAME"
+
+  update-server-cert-all: |
+    #!/bin/bash
+    set -euC
+    /script/update-server-cert gatakko-core registry
+    /script/update-server-cert gatakko-core ldap
+    /script/update-server-cert gatakko-core phpldapadmin
+    /script/update-server-cert gatakko-core webui

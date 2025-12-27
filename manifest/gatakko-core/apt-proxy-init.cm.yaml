@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apt-proxy-init
+  namespace: gatakko-core
+data:
+  10-config: |
+    #!/bin/bash
+    set -euC
+
+    ADMIN_AUTH=$(</secret/admin_auth)
+
+    patch -s -t -p0 <<END
+    --- etc/apt-cacher-ng/acng.conf.orig
+    +++ etc/apt-cacher-ng/acng.conf
+    @@ -107,6 +107,7 @@
+     # activity type, time and transfer sizes are logged.
+     #
+     # VerboseLog: 1
+    +VerboseLog: 0
+
+     # Don't detach from the starting console.
+     #
+    @@ -458,6 +459,7 @@
+     #
+     # Default: ^(bugs\.debian\.org|changelogs\.ubuntu\.com):443$
+     # PassThroughPattern: ^(bugs\.debian\.org|changelogs\.ubuntu\.com):443$
+    +PassThroughPattern: .*
+
+     # Interval an overaged local cache item (i.e. active file descriptor) can be
+     # considered broken so that a new forced download can be started. Such
+    --- etc/apt-cacher-ng/security.conf.orig
+    +++ etc/apt-cacher-ng/security.conf
+    @@ -9,4 +9,5 @@
+     # visit pages with administrative functionality. Format: username:password
+
+     #AdminAuth: mooma:moopa
+    +AdminAuth: $ADMIN_AUTH
+
+    END
+
+  20-var-cache: |
+    #!/bin/bash
+    set -euC
+    chown apt-cacher-ng:apt-cacher-ng /var/cache/apt-cacher-ng
