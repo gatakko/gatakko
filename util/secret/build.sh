@@ -108,6 +108,7 @@ ssh-keygen -q -t rsa -b 2048 -C sshd -P '' -f sshd/ssh_host_rsa_key
 ssh-keygen -q -t ed25519 -C login -P '' -f login
 ssh-keygen -q -t ed25519 -C admin -P '' -f admin
 ssh-keygen -q -t ed25519 -C webui -P '' -f webui
+ssh-keygen -q -t ed25519 -C sign -P '' -f sign
 
 ## Generate secrets
 make_secret gatakko-builder buildkit \
@@ -129,7 +130,9 @@ make_secret gatakko-core git-host-key \
 make_secret gatakko-core git \
   admin.pub \
   login.pub \
-  webui.pub
+  webui.pub \
+  sign.pub \
+  sign
 make_secret gatakko-core ldap-env \
   LDAP_ADMIN_PASSWORD \
   LDAP_SSS_DN_PASSWORD
