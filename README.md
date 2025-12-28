@@ -11,51 +11,31 @@ tailored for various lectures and exercises in information engineering.
 
 ### Quick Installation
 
-To try Gatakko locally, follow these steps:
+To quickly set up Gatakko locally, follow these steps:
 
-1. Set up a Kubernetes cluster using a lightweight distribution such as
-   k3s, microk8s, or minikube.
+1. Set up a single-node Kubernetes cluster using a lightweight distribution
+   such as k3s, microk8s, or minikube.
 
-2. Apply Gatakko manifests to the Kubernetes cluster:
+2. Run the install script:
    ```sh
-   kubectl apply -k overlay/dev
+   util/install.sh -c single-node -c node-port
    ```
 
-3. Wait until the `registry` pod in the `gatakko-core` namespace becomes ready.
+   The `-c` option applies Kustomize components.
+   The following components are available:
 
-4. Build container images:
-   ```sh
-   dockerfile/build.sh
-   ```
+   | Component | Description |
+   |-----------|-------------|
+   | `haproxy` | Use HAProxy to offer all services within a single IP address |
+   | `http-registry` | Use HTTP to access built-in container image registry |
+   | `node-port` | Use NodePort instead of LoadBalancer |
+   | `single-node` | Create all PVs with ReadWriteOnce access mode |
+   | `without-ldap` | Remove built-in LDAP server |
 
-5. Wait until all pods in the `gatakko-core` and `gatakko-user` namespaces
-   are running.
+After the setup completes, `install.sh` will display the `admin` account
+password and the SSH private key for `admin`.
 
-6. Refresh passwords and private keys:
-   ```sh
-   util/secret/build.sh
-   ```
-
-7. Set up default desktop environments:
-   ```sh
-   util/flavor/build.sh
-   ```
-
-8. Create user accounts and groups:
-   ```sh
-   util/ldap/build.sh
-   ```
-
-9. Obtain the `admin` account password:
-   ```sh
-   util/secret/get.sh
-   ```
-
-10. Wait until all pods in the `gatakko-builder` namespace have terminated
-    (indicating desktop image build completion).
-
-After completing the setup, the following ports are exposed on each
-Kubernetes node:
+The following ports will be exposed on the Kubernetes node:
 
 | Protocol | Port  | Purpose |
 |----------|-------|---------|
