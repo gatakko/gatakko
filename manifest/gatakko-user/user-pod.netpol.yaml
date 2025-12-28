@@ -6,7 +6,7 @@ metadata:
 spec:
   podSelector:
     matchExpressions:
-    - key: gatakko/user
+    - key: gatakko.github.io/user
       operator: Exists
       values: []
   policyTypes:
