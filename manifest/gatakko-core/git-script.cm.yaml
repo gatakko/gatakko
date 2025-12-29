@@ -251,8 +251,7 @@ data:
     readonly GL_REPO="$1"
 
     export GIT_DIR="$GL_REPO_BASE/$GL_REPO.git"
-    HASH=$(git rev-parse refs/heads/main 2> /dev/null || :)
-    [[ -n $HASH ]] || continue
+    HASH=$(git rev-parse refs/heads/main)
     MANIFEST=$(git cat-file -p "$HASH:manifest.json")
     SIGN=$(/script/sign-manifest "$GL_REPO" <<<"$MANIFEST")
     jq -s --arg sign "$SIGN" '
@@ -270,9 +269,9 @@ data:
         GL_REPO=${GL_REPO%.git}
         [[ $GL_REPO =~ ^flavor($|/) ]] || continue
         export GIT_DIR="$GL_REPO_BASE/$GL_REPO.git"
-        HASH=$(git rev-parse refs/heads/main 2> /dev/null || :)
+        HASH=$(git rev-parse refs/heads/main 2> /dev/null) || continue
         [[ -n $HASH ]] || continue
-        MANIFEST=$(git cat-file -p "$HASH:manifest.json")
+        MANIFEST=$(git cat-file -p "$HASH:manifest.json") || continue
         SIGN=$(/script/verify-manifest "$GL_REPO" <<<"$MANIFEST" || echo N)
         jq -sc --arg key "$GL_REPO" --arg hash "$HASH" --arg sign "$SIGN" '
           .[0]
